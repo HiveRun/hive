@@ -77,6 +77,48 @@ describe("agent status stream", () => {
   it.each([
     {
       name: "status updates",
+      event: { type: "status", status: "working" },
+      expected: ["event: status", '"status":"working"'],
+    },
+    {
+      name: "mode updates",
+      event: {
+        type: "mode",
+        startMode: "plan",
+        currentMode: "build",
+      },
+      expected: ["event: mode", '"currentMode":"build"'],
+    },
+    {
+      name: "input-required updates",
+      event: createPendingInputEvent("perm_global"),
+      expected: ["event: input_required", '"permissionId":"perm_global"'],
+    },
+  ] satisfies readonly {
+    name: string;
+    event: AgentStreamEvent;
+    expected: string[];
+  }[])(
+    "forwards global $name with the originating session",
+    async ({ event, expected }) => {
+      const { close, readChunk } = await openGlobalStatusStream();
+
+      expect(await readChunk()).toContain("event: ready");
+      publishAgentEvent(TEST_SESSION.id, event);
+
+      const update = await readChunk();
+      expect(update).toContain(`"sessionId":"${TEST_SESSION.id}"`);
+      for (const fragment of expected) {
+        expect(update).toContain(fragment);
+      }
+
+      close();
+    }
+  );
+
+  it.each([
+    {
+      name: "status updates",
       session: TEST_SESSION,
       initialMode: undefined,
       event: { type: "status", status: "working" },
@@ -263,6 +305,27 @@ function requestStatusStream(sessionId: string, signal?: AbortSignal) {
       signal,
     })
   );
+}
+
+async function openGlobalStatusStream() {
+  const controller = new AbortController();
+  const app = new Elysia().use(agentsRoutes);
+  const response = await app.handle(
+    new Request("http://localhost/api/agents/events", {
+      signal: controller.signal,
+    })
+  );
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Expected global event stream body");
+  }
+  const decoder = new TextDecoder();
+  const readChunk = async () => {
+    const value = (await reader.read()).value;
+    return value instanceof Uint8Array ? decoder.decode(value) : String(value);
+  };
+
+  return { readChunk, close: () => controller.abort() };
 }
 
 function createPendingInputEvent(

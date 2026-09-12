@@ -199,7 +199,7 @@ share a different Hive home.
 To launch the local web/server dev stack and Electron together, run:
 
 ```bash
-bun run dev:desktop:full
+bun run dev:desktop
 ```
 
 This waits for `http://localhost:3001` by default before opening Electron.
@@ -224,7 +224,7 @@ share a different Hive home.
 To launch the local web/server dev stack and Electron together, run:
 
 ```bash
-bun run dev:desktop:full
+bun run dev:desktop
 ```
 
 This waits for `http://localhost:3001` by default before opening Electron.

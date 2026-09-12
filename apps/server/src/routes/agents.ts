@@ -1,5 +1,8 @@
 import { Elysia, sse, t } from "elysia";
-import { subscribeAgentEvents } from "../agents/events";
+import {
+  subscribeAgentEvents,
+  subscribeAllAgentEvents,
+} from "../agents/events";
 import { loadOpencodeModelPreferences } from "../agents/opencode-config";
 import {
   fetchAgentMessages,
@@ -189,6 +192,22 @@ const messageRouteErrorPayload = (
 
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
+  .get("/events", ({ request }) => {
+    const { iterator, cleanup } = createGlobalEventIterator(request.signal);
+
+    async function* stream() {
+      try {
+        yield sse({ event: "ready", data: { timestamp: Date.now() } });
+        for await (const { sessionId, event } of iterator) {
+          yield formatAgentStreamSseEvent(event, sessionId);
+        }
+      } finally {
+        cleanup();
+      }
+    }
+
+    return stream();
+  })
   .get(
     "/models",
     async ({ query, set, getWorkspaceContext }) => {
@@ -348,11 +367,15 @@ async function* streamAgentEvents(
   }
 }
 
-function formatAgentStreamSseEvent(event: AgentStreamEvent) {
+function formatAgentStreamSseEvent(
+  event: AgentStreamEvent,
+  globalSessionId?: string
+) {
   if (event.type === "status") {
     return sse({
       event: "status",
       data: {
+        ...(globalSessionId ? { sessionId: globalSessionId } : {}),
         status: event.status,
         ...(event.error ? { error: event.error } : {}),
       },
@@ -363,6 +386,7 @@ function formatAgentStreamSseEvent(event: AgentStreamEvent) {
     return sse({
       event: "mode",
       data: {
+        ...(globalSessionId ? { sessionId: globalSessionId } : {}),
         startMode: event.startMode,
         currentMode: event.currentMode,
         ...(event.modeUpdatedAt ? { modeUpdatedAt: event.modeUpdatedAt } : {}),
@@ -373,7 +397,7 @@ function formatAgentStreamSseEvent(event: AgentStreamEvent) {
   return sse({
     event: "input_required",
     data: {
-      sessionId: event.sessionId,
+      sessionId: globalSessionId ?? event.sessionId,
       permissionId: event.permissionId,
       title: event.title,
       kind: event.kind,
@@ -384,6 +408,19 @@ function formatAgentStreamSseEvent(event: AgentStreamEvent) {
 function createEventIterator(sessionId: string, signal: AbortSignal) {
   return createAsyncEventIterator<AgentStreamEvent>(
     (handler) => subscribeAgentEvents(sessionId, handler),
+    signal
+  );
+}
+
+function createGlobalEventIterator(signal: AbortSignal) {
+  return createAsyncEventIterator<{
+    sessionId: string;
+    event: AgentStreamEvent;
+  }>(
+    (handler) =>
+      subscribeAllAgentEvents((sessionId, event) =>
+        handler({ sessionId, event })
+      ),
     signal
   );
 }
