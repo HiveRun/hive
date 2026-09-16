@@ -49,9 +49,12 @@ import {
 
 const DEFAULT_SERVER_PORT = 3000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
+const DESKTOP_READY_HEADER = "X-Hive-Desktop-Ready";
 const STARTUP_RECOVERY_DELAY_MS = 1000;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
-const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
+const PORT = Number(
+  process.env.HIVE_DESKTOP_API_PORT ?? process.env.PORT ?? DEFAULT_SERVER_PORT
+);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
 const serverRuntimeState = globalThis as typeof globalThis & {
@@ -272,6 +275,12 @@ const markDaemonReady = () => {
 
 const createApp = () =>
   new Elysia()
+    .onRequest(({ set }) => {
+      const readyToken = process.env.HIVE_DESKTOP_READY_TOKEN;
+      if (readyToken) {
+        set.headers[DESKTOP_READY_HEADER] = readyToken;
+      }
+    })
     .use(
       logger({
         level: process.env.LOG_LEVEL || "info",

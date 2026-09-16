@@ -202,8 +202,11 @@ To launch the local web/server dev stack and Electron together, run:
 bun run dev:desktop
 ```
 
-This waits for `http://localhost:3001` by default before opening Electron.
-Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
+This starts the renderer at port `3001` by default, selects the next available
+renderer port when needed, and passes the selected URL to Electron. It also
+waits for the workspace-local Hive API before opening the desktop window. Set
+`HIVE_DESKTOP_URL` to change the first renderer URL considered, or
+`HIVE_DESKTOP_BACKEND_URL` to use a different free loopback API port.
 
 ### Manual Setup
 
@@ -227,8 +230,11 @@ To launch the local web/server dev stack and Electron together, run:
 bun run dev:desktop
 ```
 
-This waits for `http://localhost:3001` by default before opening Electron.
-Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
+This starts the renderer at port `3001` by default, selects the next available
+renderer port when needed, and passes the selected URL to Electron. It also
+waits for the workspace-local Hive API before opening the desktop window. Set
+`HIVE_DESKTOP_URL` to change the first renderer URL considered, or
+`HIVE_DESKTOP_BACKEND_URL` to use a different free loopback API port.
 
 **URLs:**
 - Web: [http://localhost:3001](http://localhost:3001)

@@ -66,6 +66,19 @@
     },
     "dev": {
       "cache": false,
+      "env": [
+        "DATABASE_URL",
+        "HIVE_DESKTOP_API_PORT",
+        "HIVE_DESKTOP_DEV_HOST",
+        "HIVE_DESKTOP_DEV_PORT",
+        "HIVE_DESKTOP_RENDERER_READY_FILE",
+        "HIVE_DESKTOP_READY_TOKEN",
+        "HIVE_HOME",
+        "HIVE_READY_FILE",
+        "HIVE_WORKSPACE_ROOT",
+        "VITE_API_URL",
+        "WEB_PORT"
+      ],
       "persistent": true
     },
     "db:push": {

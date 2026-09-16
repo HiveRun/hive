@@ -202,7 +202,7 @@ export const createDesktopStartupController = () => {
         timeoutMs: resolveStartupTimeoutMs(),
       });
 
-      if (!ready) {
+      if (!ready && currentState.phase !== "error") {
         updateState({
           phase: "error",
           message: "Hive daemon did not become ready",
