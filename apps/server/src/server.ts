@@ -53,7 +53,9 @@ const DESKTOP_READY_HEADER = "X-Hive-Desktop-Ready";
 const STARTUP_RECOVERY_DELAY_MS = 1000;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const PORT = Number(
-  process.env.HIVE_DESKTOP_API_PORT ?? process.env.PORT ?? DEFAULT_SERVER_PORT
+  process.env.HIVE_DESKTOP_API_PORT?.trim() ||
+    process.env.PORT ||
+    DEFAULT_SERVER_PORT
 );
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
@@ -152,9 +154,9 @@ const hiveHome = resolveHiveHome();
 export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
 export const readyFilePath =
-  process.env.HIVE_READY_FILE ?? join(hiveHome, "daemon-ready");
+  process.env.HIVE_READY_FILE?.trim() || join(hiveHome, "daemon-ready");
 export const DEFAULT_WEB_PORT =
-  process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
+  process.env.WEB_PORT?.trim() || (isCompiledRuntime ? String(PORT) : "3001");
 const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,

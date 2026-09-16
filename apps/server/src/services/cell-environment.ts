@@ -7,7 +7,22 @@ import { sanitizeServiceEnvironmentName } from "../config/service-graph";
 import { resolveHiveHome } from "../workspaces/registry";
 
 const CELL_DIRECTORY_MODE = 0o700;
+const ENV_COMMAND = "/usr/bin/env";
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
+const SHELL_ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const INHERITED_CELL_ENVIRONMENT_EXCLUSIONS = new Set([
+  "HIVE_READY_FILE",
+  "HIVE_WORKSPACE_ROOT",
+  "VITE_API_URL",
+  "WEB_PORT",
+]);
+
+function isExcludedInheritedCellEnvironmentKey(key: string): boolean {
+  return (
+    key.startsWith("HIVE_DESKTOP_") ||
+    INHERITED_CELL_ENVIRONMENT_EXCLUSIONS.has(key)
+  );
+}
 
 type CellEnvironment = {
   HIVE_CELL_ID: string;
@@ -83,6 +98,63 @@ export function resolveCellEnvironment(
     HIVE_CELL_ARTIFACTS_DIR: resolveCellArtifactsDir(cellId),
     HIVE_BROWSE_ROOT: browseRoot,
     HIVE_HOME: resolve(browseRoot, ".hive", "home"),
+  };
+}
+
+export function buildCellProcessEnvironment(
+  inheritedEnvironment: NodeJS.ProcessEnv,
+  cellEnvironment: Record<string, string>,
+  platform: NodeJS.Platform = process.platform
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const [key, value] of Object.entries(inheritedEnvironment)) {
+    if (
+      value !== undefined &&
+      (!isExcludedInheritedCellEnvironmentKey(key) || platform === "win32")
+    ) {
+      environment[key] = value;
+    }
+  }
+  if (platform === "win32") {
+    for (const key of Object.keys(inheritedEnvironment)) {
+      if (
+        isExcludedInheritedCellEnvironmentKey(key) &&
+        !Object.hasOwn(cellEnvironment, key)
+      ) {
+        environment[key] = "";
+      }
+    }
+  }
+  return { ...environment, ...cellEnvironment };
+}
+
+export function resolveCellProcessLaunch({
+  cellEnvironment,
+  command,
+  inheritedEnvironment,
+  platform = process.platform,
+  shell,
+}: {
+  cellEnvironment: Record<string, string>;
+  command: string;
+  inheritedEnvironment: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  shell: string;
+}): { args: string[]; file: string } {
+  const keysToUnset = Object.keys(inheritedEnvironment)
+    .filter(
+      (key) =>
+        isExcludedInheritedCellEnvironmentKey(key) &&
+        !Object.hasOwn(cellEnvironment, key) &&
+        SHELL_ENVIRONMENT_KEY_PATTERN.test(key)
+    )
+    .sort();
+  if (keysToUnset.length === 0 || platform === "win32") {
+    return { args: ["-lc", command], file: shell };
+  }
+  return {
+    args: [...keysToUnset.flatMap((key) => ["-u", key]), shell, "-lc", command],
+    file: ENV_COMMAND,
   };
 }
 

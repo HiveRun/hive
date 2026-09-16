@@ -73,6 +73,12 @@ describe("desktop development launcher", () => {
         PORT: String(STANDARD_PORT_OVERRIDE),
       })
     ).toBe(DESKTOP_PORT_OVERRIDE);
+    expect(
+      resolveDevServerPort({
+        HIVE_DESKTOP_DEV_PORT: "",
+        PORT: String(STANDARD_PORT_OVERRIDE),
+      })
+    ).toBe(STANDARD_PORT_OVERRIDE);
   });
 
   test("fails clearly instead of adopting an API on the configured port", async () => {

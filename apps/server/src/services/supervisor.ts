@@ -26,7 +26,11 @@ import type {
   CellServicePort,
   ServiceStatus,
 } from "../schema/services";
-import { ensureCellEnvironment } from "./cell-environment";
+import {
+  buildCellProcessEnvironment,
+  ensureCellEnvironment,
+  resolveCellProcessLaunch,
+} from "./cell-environment";
 import { emitServiceUpdate } from "./events";
 import {
   createPortManager,
@@ -535,16 +539,22 @@ const defaultSpawnProcess: SpawnProcess = ({
   cols,
   rows,
 }) => {
-  const pty = spawnPty(DEFAULT_SHELL, ["-lc", command], {
+  const cellEnvironment = {
+    ...env,
+    TERM: TERMINAL_NAME,
+  };
+  const launch = resolveCellProcessLaunch({
+    cellEnvironment,
+    command,
+    inheritedEnvironment: process.env,
+    shell: DEFAULT_SHELL,
+  });
+  const pty = spawnPty(launch.file, launch.args, {
     name: TERMINAL_NAME,
     cols: cols ?? DEFAULT_TERMINAL_COLS,
     rows: rows ?? DEFAULT_TERMINAL_ROWS,
     cwd,
-    env: {
-      ...process.env,
-      ...env,
-      TERM: TERMINAL_NAME,
-    },
+    env: buildCellProcessEnvironment(process.env, cellEnvironment),
   });
 
   const pid = pty.pid;

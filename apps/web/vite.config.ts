@@ -11,9 +11,9 @@ const DEFAULT_API_SERVER_PORT = "3000";
 const ROUTE_FILE_IGNORE_PATTERN = "\\.(test|spec)\\.(ts|tsx|js|jsx)$";
 export function resolveDevServerPort(env: NodeJS.ProcessEnv = process.env) {
   const resolvedPort = Number(
-    env.HIVE_DESKTOP_DEV_PORT ??
-      env.PORT ??
-      env.WEB_PORT ??
+    env.HIVE_DESKTOP_DEV_PORT?.trim() ||
+      env.PORT?.trim() ||
+      env.WEB_PORT?.trim() ||
       DEFAULT_DEV_SERVER_PORT
   );
   return Number.isNaN(resolvedPort) ? DEFAULT_DEV_SERVER_PORT : resolvedPort;
@@ -84,7 +84,7 @@ export default defineConfig(({ mode }) => {
             "X-Hive-Desktop-Ready": process.env.HIVE_DESKTOP_READY_TOKEN,
           }
         : undefined,
-      host: process.env.HIVE_DESKTOP_DEV_HOST,
+      host: process.env.HIVE_DESKTOP_DEV_HOST?.trim() || undefined,
       port: devServerPort,
       proxy: {
         "/api": {
