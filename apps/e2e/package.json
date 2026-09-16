@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:run": "bun test src/runtime/*.test.ts",
     "test:e2e": "HIVE_E2E_WORKERS=1 bun run src/runtime/e2e-runner.ts",
+    "test:e2e:hive-dev": "HIVE_E2E_WORKSPACE_MODE=clone HIVE_E2E_WORKERS=1 HIVE_E2E_VIDEO_MODE=off bun run src/runtime/e2e-runner.ts --spec specs/hive-dev-provisioning.clone.e2e.ts",
     "test:e2e:fast": "bun run src/runtime/run-fast.ts",
     "test:e2e:tune": "HIVE_E2E_BENCH_REPEATS=2 bun run src/runtime/benchmark-workers.ts",
     "test:e2e:headed": "HIVE_E2E_HEADED=1 bun run src/runtime/e2e-runner.ts",
@@ -15,6 +17,7 @@
     "install:browsers:ci": "playwright install --with-deps chromium"
   },
   "devDependencies": {
+    "@opencode-ai/client": "catalog:",
     "@playwright/test": "^1.55.1",
     "@types/bun": "^1.3.1",
     "typescript": "catalog:"

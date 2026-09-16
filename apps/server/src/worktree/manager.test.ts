@@ -8,7 +8,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createWorktreeManager, resolveHiveServerUrl } from "./manager";
+import { resolveHiveServerUrl } from "../agents/hive-opencode-tool";
+import { createWorktreeManager } from "./manager";
 
 describe("resolveHiveServerUrl", () => {
   const originalEnv = { ...process.env };
@@ -105,6 +106,14 @@ describe("createWorktreeManager include copy", () => {
 
     const copiedEnv = await readTextFile(join(location.path, ".env"), "utf8");
     expect(copiedEnv).toContain("API_KEY=secret");
+    const plugin = await readTextFile(
+      join(location.path, ".opencode", "plugins", "hive", "index.js"),
+      "utf8"
+    );
+    expect(plugin).toContain("Plugin.define");
+    await expect(
+      readTextFile(join(location.path, ".opencode", "tools", "hive.ts"), "utf8")
+    ).rejects.toThrow();
   });
 
   it("creates the isolated cell branch from a selected source branch", async () => {

@@ -8,22 +8,27 @@ import {
   microphoneSpeechPilotFrequency,
   outputSpeechPilotFrequency,
 } from "../../../../packages/android-runtime/e2e/browser-microphone";
+import { resolveOpencodeBinary } from "../../../server/src/agents/opencode-binary";
 import { finishRuntimeRun } from "./artifacts";
+import { collectCleanupFailures, throwRunAndCleanupErrors } from "./errors";
 import { createFixtureWorkspace } from "./fixture-workspace";
 import { parseSpecArg, resolveRuntimePaths } from "./paths";
 import { runPlaywrightSuite } from "./playwright";
 import {
   createManagedProcessStopper,
   type ManagedProcess,
-  readProcessTable,
   runCommand,
   runCommandCapture,
   startManagedProcess,
   stopManagedProcesses,
-  terminateProcessIds,
 } from "./process";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
-import { startCompiledWebE2eServer, startWebE2eServer } from "./server";
+import {
+  cleanupRegisteredOpencodeServices,
+  startCompiledWebE2eServer,
+  startWebE2eServer,
+  stopIsolatedOpencodeService,
+} from "./server";
 import { waitForHttpOk } from "./wait";
 
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
@@ -48,7 +53,6 @@ const CLEANUP_TIMEOUT_MS = ANDROID_E2E
   ? ANDROID_CLEANUP_TIMEOUT_MS
   : DEFAULT_CLEANUP_TIMEOUT_MS;
 const STARTUP_TIMEOUT_MS = 180_000;
-const OPENCODE_TERMINATE_WAIT_MS = 1000;
 const WEB_READY_PATH = "/";
 const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 const ANDROID_BUILD_FINGERPRINT_FILENAME = ".hive-e2e-build-fingerprint";
@@ -97,6 +101,56 @@ async function measurePhase<T>(phase: string, operation: () => Promise<T>) {
   }
 }
 
+async function finalizeRuntimeRun(
+  context: RuntimeContext,
+  managedProcesses: ManagedProcess[],
+  runSucceeded: boolean
+): Promise<unknown> {
+  const failures: unknown[] = [];
+  await measurePhase("process cleanup", async () => {
+    await collectCleanupFailures(
+      [
+        () => stopManagedProcesses(managedProcesses, stopManagedProcess),
+        () => stopIsolatedOpencodeService(context),
+      ],
+      failures
+    );
+  });
+
+  const finalizationSteps = [
+    () =>
+      writeFile(
+        join(context.artifactsDir, "e2e-phase-timings.json"),
+        JSON.stringify(phaseTimings, null, 2)
+      ),
+    () => preserveFailureRuntimeLogs({ context, runSucceeded }),
+    () =>
+      finishRuntimeRun({
+        artifactsDir: context.artifactsDir,
+        keepArtifacts: KEEP_ARTIFACTS,
+        reportsLabel: "E2E reports",
+        runRoot: context.runRoot,
+        runSucceeded: runSucceeded && failures.length === 0,
+        runArtifactsLabel: "E2E run artifacts",
+        stableArtifactsDir,
+      }),
+  ];
+  for (const finalize of finalizationSteps) {
+    try {
+      await finalize();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  return failures.length > 0
+    ? new AggregateError(
+        failures,
+        "E2E cleanup and artifact finalization failed"
+      )
+    : undefined;
+}
+
 async function run() {
   const spec = parseSpecArg(process.argv.slice(2));
   const workspaceMode = resolveWorkspaceMode();
@@ -117,13 +171,11 @@ async function run() {
   );
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
+  let runError: unknown;
+  let processCleanupError: unknown;
 
   try {
-    await cleanupOrphanedOpencodeProcesses({
-      currentPid: process.pid,
-      e2eRunsRoot,
-      preserveRunRoot: context.runRoot,
-    });
+    await cleanupOrphanedOpencodeServices(context.runRoot);
 
     if (useSharedHiveHome) {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
@@ -156,12 +208,14 @@ async function run() {
           context,
           executablePath: androidEnvironment.executablePath,
           logsDir: context.logsDir,
+          opencodeBinaryPath: androidEnvironment.opencodeBinaryPath,
           releaseDirectory: androidEnvironment.releaseDirectory,
           stopProcess: stopManagedProcess,
         })
       : await startWebE2eServer({
           context,
           logsDir: context.logsDir,
+          opencodeBinaryPath: resolveOpencodeBinary(),
           serverRoot,
           stopProcess: stopManagedProcess,
         });
@@ -239,27 +293,20 @@ async function run() {
 
     runSucceeded = true;
     process.stdout.write("E2E suite passed.\n");
+  } catch (error) {
+    runError = error;
   } finally {
-    await measurePhase("process cleanup", async () => {
-      await stopManagedProcesses(managedProcesses, stopManagedProcess);
-      await cleanupOpencodeProcessesForRunRoot(context.runRoot);
-    });
-    await writeFile(
-      join(context.artifactsDir, "e2e-phase-timings.json"),
-      JSON.stringify(phaseTimings, null, 2)
+    processCleanupError = await finalizeRuntimeRun(
+      context,
+      managedProcesses,
+      runSucceeded
     );
-    await preserveFailureRuntimeLogs({ context, runSucceeded });
-
-    await finishRuntimeRun({
-      artifactsDir: context.artifactsDir,
-      keepArtifacts: KEEP_ARTIFACTS,
-      reportsLabel: "E2E reports",
-      runRoot: context.runRoot,
-      runSucceeded,
-      runArtifactsLabel: "E2E run artifacts",
-      stableArtifactsDir,
-    });
   }
+  throwRunAndCleanupErrors(
+    runError,
+    processCleanupError,
+    "E2E run and cleanup failed"
+  );
 }
 
 async function preserveFailureRuntimeLogs(options: {
@@ -475,6 +522,7 @@ async function prepareAndroidE2e(artifactsDir: string) {
     `hive-${process.platform}-${process.arch}`
   );
   const executablePath = join(releaseDirectory, "hive");
+  const opencodeBinaryPath = join(releaseDirectory, "opencode2");
   await prepareAndroidBuild({ executablePath, releaseDirectory });
   const microphoneSpeechPath = join(
     artifactsDir,
@@ -508,6 +556,7 @@ async function prepareAndroidE2e(artifactsDir: string) {
     HIVE_E2E_ANDROID_OUTPUT_SPEECH_PATH: outputSpeechPath,
     HIVE_E2E_BROWSER_SPEECH_PATH: microphoneSpeechPath,
     executablePath,
+    opencodeBinaryPath,
     releaseDirectory,
   };
 }
@@ -642,61 +691,16 @@ async function createSpeechFixture(options: {
 
 const artifactsDirFor = (outputPath: string) => resolvePath(outputPath, "..");
 
-async function cleanupOrphanedOpencodeProcesses(options: {
-  currentPid: number;
-  e2eRunsRoot: string;
-  preserveRunRoot: string;
-}): Promise<void> {
-  const processTable = readProcessTable();
-  const concurrentRunnerPids = processTable
-    .filter(
-      (entry) =>
-        entry.pid !== options.currentPid &&
-        entry.args.includes("src/runtime/e2e-runner.ts")
-    )
-    .map((entry) => entry.pid);
-
-  if (concurrentRunnerPids.length > 0) {
-    process.stdout.write(
-      `Skipping stale opencode cleanup while other e2e runners are active: ${concurrentRunnerPids.join(", ")}\n`
-    );
-    return;
-  }
-
-  const orphanedPids = processTable
-    .filter(
-      (entry) =>
-        entry.args.includes("opencode") &&
-        entry.args.includes(options.e2eRunsRoot) &&
-        !entry.args.includes(options.preserveRunRoot)
-    )
-    .map((entry) => entry.pid);
-
-  const terminated = await terminateProcessIds(orphanedPids, {
-    terminateWaitMs: OPENCODE_TERMINATE_WAIT_MS,
-  });
-  if (terminated > 0) {
-    process.stdout.write(
-      `Cleaned ${String(terminated)} stale opencode process(es) from previous e2e runs\n`
-    );
-  }
-}
-
-async function cleanupOpencodeProcessesForRunRoot(
-  runRoot: string
+async function cleanupOrphanedOpencodeServices(
+  preserveRunRoot: string
 ): Promise<void> {
-  const runRootPids = readProcessTable()
-    .filter(
-      (entry) => entry.args.includes("opencode") && entry.args.includes(runRoot)
-    )
-    .map((entry) => entry.pid);
-
-  const terminated = await terminateProcessIds(runRootPids, {
-    terminateWaitMs: OPENCODE_TERMINATE_WAIT_MS,
+  const stopped = await cleanupRegisteredOpencodeServices({
+    preserveRunRoot,
+    runsRoot: e2eRunsRoot,
   });
-  if (terminated > 0) {
+  if (stopped > 0) {
     process.stdout.write(
-      `Cleaned ${String(terminated)} opencode process(es) for run ${runRoot}\n`
+      `Cleaned ${String(stopped)} stale opencode service(s) from previous e2e runs\n`
     );
   }
 }

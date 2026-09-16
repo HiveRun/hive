@@ -4,6 +4,7 @@ import { defineConfig } from "@playwright/test";
 
 const isHeaded = process.env.HIVE_E2E_HEADED === "1";
 const isAndroidE2e = process.env.HIVE_E2E_ANDROID === "1";
+const isCloneE2e = process.env.HIVE_E2E_WORKSPACE_MODE === "clone";
 const baseURL = process.env.HIVE_E2E_BASE_URL ?? "http://127.0.0.1:3001";
 const artifactsDir =
   process.env.HIVE_E2E_ARTIFACTS_DIR ??
@@ -19,11 +20,11 @@ const workers = resolveWorkerCount({
   isCi: Boolean(process.env.CI),
 });
 const videoMode = resolveVideoMode(process.env.HIVE_E2E_VIDEO_MODE);
+const testPatterns = resolveTestPatterns();
 
 export default defineConfig({
   testDir: "./specs",
-  testMatch: isAndroidE2e ? ["**/*.android.e2e.ts"] : ["**/*.e2e.ts"],
-  testIgnore: isAndroidE2e ? [] : ["**/*.android.e2e.ts"],
+  ...testPatterns,
   timeout: isAndroidE2e ? ANDROID_TEST_TIMEOUT_MS : DEFAULT_TEST_TIMEOUT_MS,
   expect: {
     timeout: 30_000,
@@ -72,6 +73,25 @@ export default defineConfig({
     },
   ],
 });
+
+function resolveTestPatterns() {
+  if (isAndroidE2e) {
+    return {
+      testIgnore: [],
+      testMatch: ["**/*.android.e2e.ts"],
+    };
+  }
+  if (isCloneE2e) {
+    return {
+      testIgnore: ["**/*.android.e2e.ts"],
+      testMatch: ["**/*.clone.e2e.ts"],
+    };
+  }
+  return {
+    testIgnore: ["**/*.android.e2e.ts", "**/*.clone.e2e.ts"],
+    testMatch: ["**/*.e2e.ts"],
+  };
+}
 
 function resolveVideoMode(value: string | undefined) {
   if (value === "off" || value === "on" || value === "retain-on-failure") {

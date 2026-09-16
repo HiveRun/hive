@@ -56,6 +56,7 @@ export type TerminalSessionService<Session, Event> = {
 
 type TerminalStoreOptions<RecordType, Session> = {
   channelForId: (id: string) => string;
+  onClose?: (record: RecordType) => void;
   trimOutput: (current: string, chunk: string) => string;
   toSession: (record: RecordType) => Session;
 };
@@ -136,6 +137,7 @@ export const createTerminalStore = <
   Session,
 >({
   channelForId,
+  onClose,
   trimOutput,
   toSession,
 }: TerminalStoreOptions<RecordType, Session>) => {
@@ -144,7 +146,11 @@ export const createTerminalStore = <
   emitter.setMaxListeners(0);
 
   const closeRecord = (record?: RecordType) => {
-    if (!record?.kill) {
+    if (!record) {
+      return;
+    }
+    onClose?.(record);
+    if (!record.kill) {
       return;
     }
 
@@ -219,6 +225,7 @@ export const createTerminalStore = <
         record.exitCode = exitCode;
         return;
       }
+      onClose?.(record);
       record.status = "exited";
       record.exitCode = exitCode;
       record.kill = undefined;
@@ -256,6 +263,8 @@ type PtySessionControllerOptions<
   createRecord: (args: Args, pty: PtyTerminalProcess) => RecordType;
   toSession: (record: RecordType) => Session;
   canReuse?: (record: RecordType, args: Args) => boolean;
+  onData?: (record: RecordType, chunk: string) => void;
+  onClose?: (record: RecordType) => void;
   onSessionStarted?: (record: RecordType) => void;
   runningErrorMessage: string;
 };
@@ -271,11 +280,14 @@ export const createPtySessionController = <
   createRecord,
   toSession,
   canReuse = (record) => record.status === "running",
+  onData,
+  onClose,
   onSessionStarted,
   runningErrorMessage,
 }: PtySessionControllerOptions<Args, RecordType, Session>) => {
   const sessions = createTerminalStore<RecordType, Session>({
     channelForId,
+    onClose,
     trimOutput,
     toSession,
   });
@@ -298,9 +310,19 @@ export const createPtySessionController = <
       const pty = spawnPty(args);
       const record = createRecord(args, pty);
       pty.onData((chunk) => {
+        if (sessions.get(args.cellId) !== record) {
+          return;
+        }
         sessions.appendOutput(args.cellId, chunk);
+        if (sessions.get(args.cellId) !== record) {
+          return;
+        }
+        onData?.(record, chunk);
       });
       pty.onExit(({ exitCode, signal }) => {
+        if (sessions.get(args.cellId) !== record) {
+          return;
+        }
         sessions.markExit(
           args.cellId,
           exitCode,

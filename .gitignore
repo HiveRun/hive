@@ -86,7 +86,7 @@ docs/.obsidian/appearance.json
 .opencode/package-lock.json
 .opencode/state/
 .opencode/themes/
-.opencode/tools/
+.opencode/plugins/hive/
 
 # Local agent config artifacts
 .gemini/

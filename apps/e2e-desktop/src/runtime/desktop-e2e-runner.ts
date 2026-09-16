@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { finishRuntimeRun } from "../../../e2e/src/runtime/artifacts";
+import {
+  collectCleanupFailures,
+  throwRunAndCleanupErrors,
+} from "../../../e2e/src/runtime/errors";
 import { createFixtureWorkspace } from "../../../e2e/src/runtime/fixture-workspace";
 import {
   parseSpecArg,
@@ -14,7 +18,12 @@ import {
   stopManagedProcesses,
 } from "../../../e2e/src/runtime/process";
 import { createRuntimeContext } from "../../../e2e/src/runtime/runtime-context";
-import { startDesktopE2eServer } from "../../../e2e/src/runtime/server";
+import {
+  cleanupRegisteredOpencodeServices,
+  startDesktopE2eServer,
+  stopIsolatedOpencodeService,
+} from "../../../e2e/src/runtime/server";
+import { resolveOpencodeBinary } from "../../../server/src/agents/opencode-binary";
 
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
 const CLEANUP_TIMEOUT_MS = 15_000;
@@ -31,6 +40,7 @@ const desktopRendererEntry = join(
   "dist",
   "index.html"
 );
+const desktopRunsRoot = join(repoRoot, "tmp", "e2e-desktop-runs");
 const stopManagedProcess = createManagedProcessStopper({
   cleanupTimeoutMs: CLEANUP_TIMEOUT_MS,
 });
@@ -76,12 +86,16 @@ async function run() {
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
+  let runError: unknown;
+  let cleanupError: unknown;
   try {
+    await cleanupOrphanedOpencodeServices(context.runRoot);
     await createDesktopFixtureWorkspace(context.workspaceRoot);
 
     const server = await startDesktopE2eServer({
       context,
       logsDir: context.logsDir,
+      opencodeBinaryPath: resolveOpencodeBinary(),
       serverRoot,
       stopProcess: stopManagedProcess,
     });
@@ -126,18 +140,56 @@ async function run() {
 
     runSucceeded = true;
     process.stdout.write("Desktop E2E suite passed.\n");
+  } catch (error) {
+    runError = error;
   } finally {
-    await stopManagedProcesses(managedProcesses, stopManagedProcess);
+    const cleanupFailures: unknown[] = [];
+    await collectCleanupFailures(
+      [
+        () => stopManagedProcesses(managedProcesses, stopManagedProcess),
+        () => stopIsolatedOpencodeService(context),
+      ],
+      cleanupFailures
+    );
 
-    await finishRuntimeRun({
-      artifactsDir: context.artifactsDir,
-      keepArtifacts: KEEP_ARTIFACTS,
-      reportsLabel: "Desktop E2E reports",
-      runRoot: context.runRoot,
-      runSucceeded,
-      runArtifactsLabel: "Desktop E2E run artifacts",
-      stableArtifactsDir,
-    });
+    try {
+      await finishRuntimeRun({
+        artifactsDir: context.artifactsDir,
+        keepArtifacts: KEEP_ARTIFACTS,
+        reportsLabel: "Desktop E2E reports",
+        runRoot: context.runRoot,
+        runSucceeded: runSucceeded && cleanupFailures.length === 0,
+        runArtifactsLabel: "Desktop E2E run artifacts",
+        stableArtifactsDir,
+      });
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    if (cleanupFailures.length > 0) {
+      cleanupError = new AggregateError(
+        cleanupFailures,
+        "Desktop E2E cleanup and artifact finalization failed"
+      );
+    }
+  }
+  throwRunAndCleanupErrors(
+    runError,
+    cleanupError,
+    "Desktop E2E run and cleanup failed"
+  );
+}
+
+async function cleanupOrphanedOpencodeServices(
+  preserveRunRoot: string
+): Promise<void> {
+  const stopped = await cleanupRegisteredOpencodeServices({
+    preserveRunRoot,
+    runsRoot: desktopRunsRoot,
+  });
+  if (stopped > 0) {
+    process.stdout.write(
+      `Cleaned ${String(stopped)} stale opencode service(s) from previous desktop e2e runs\n`
+    );
   }
 }
 

@@ -18,6 +18,7 @@ import type {
 } from "../../services/supervisor";
 import {
   createServiceSupervisor,
+  DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS,
   SERVICE_STOP_GRACE_PERIOD_MS,
 } from "../../services/supervisor";
 import { createDeferred, setupTestDb, testDb } from "../test-db";
@@ -37,11 +38,18 @@ const silentLogger = {
 const EXPECTED_NAMED_PORT_CLAIMS = 3;
 const EXPECTED_PRIMARY_PORT_CLAIMS = 2;
 const FAILED_SERVICE_EXIT_CODE = 17;
+const TERMINATED_SERVICE_EXIT_CODE = 143;
+const STOPPED_SERVICE_STATE = {
+  status: "stopped",
+  pid: null,
+  lastKnownError: null,
+} as const;
 const REUSED_SERVICE_PID = 4343;
 const READINESS_SUCCESS_TIMEOUT_MS = 500;
 const PERSISTED_MONITOR_SETTLE_MS = 150;
 const SERVICE_STATUS_POLL_INTERVAL_MS = 5;
 const EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS = 15_000;
+const MINIMUM_COLD_TEMPLATE_SETUP_TIMEOUT_MS = 600_000;
 const HIVE_CLI_SOURCE_PATH_PATTERN = /packages\/cli\/src\/index\.ts$/;
 const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
 const originalHiveHome = process.env.HIVE_HOME;
@@ -53,6 +61,12 @@ type FakeProcess = {
 };
 
 describe("service supervisor", () => {
+  it("allows template setup enough time for a cold dependency install", () => {
+    expect(DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      MINIMUM_COLD_TEMPLATE_SETUP_TIMEOUT_MS
+    );
+  });
+
   beforeAll(async () => {
     await setupTestDb();
   });
@@ -1051,6 +1065,158 @@ describe("service supervisor", () => {
     ).toBeNull();
   });
 
+  it("keeps intentionally terminated services stopped after a signal exit", async () => {
+    const { cell, harness } = await createScenario({
+      templateId: "template-stop-signal",
+      start: true,
+      template: { services: { server: serviceDefinition() } },
+      harnessOptions: {
+        emitTerminalExitOnKill: true,
+        processKill: (_signal, exit) => exit(TERMINATED_SERVICE_EXIT_CODE),
+      },
+    });
+
+    await harness.supervisor.stopCellServices(cell.id);
+    await Promise.all(harness.processes.map((proc) => proc.handle.exited));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const service = await getOnlyService(cell.id);
+    expect(service.status).toBe("stopped");
+    expect(service.pid).toBeNull();
+    expect(service.lastKnownError).toBeNull();
+  });
+
+  it("passively releases a failed termination after its group exits", async () => {
+    let groupAlive = true;
+    const signals: Array<number | string | undefined> = [];
+    const { cell, harness, pid, service } = await createStartedServiceScenario(
+      "template-stop-retry",
+      {
+        emitTerminalExitOnKill: true,
+        stopTimeoutMs: 5,
+        processKill: (signal, exit) => {
+          signals.push(signal);
+          if (signal === "SIGTERM") {
+            exit(TERMINATED_SERVICE_EXIT_CODE);
+          }
+        },
+      }
+    );
+    await withServiceProcessGroupMock(
+      pid,
+      () => groupAlive,
+      async () => {
+        await expect(
+          harness.supervisor.stopCellService(service.id)
+        ).rejects.toThrow("did not exit after SIGKILL");
+
+        const failedStop = await getOnlyService(cell.id);
+        expect(failedStop.status).toBe("error");
+        expect(failedStop.pid).toBe(pid);
+        expect(failedStop.lastKnownError).toContain(
+          "did not exit after SIGKILL"
+        );
+
+        const failedStopSignals = [...signals];
+        groupAlive = false;
+        await new Promise((resolve) =>
+          setTimeout(resolve, PERSISTED_MONITOR_SETTLE_MS)
+        );
+        await harness.supervisor.startCellService(service.id);
+        expect(harness.processes).toHaveLength(2);
+        expect(signals).toEqual(failedStopSignals);
+      }
+    );
+
+    await harness.supervisor.stopCellService(service.id);
+    expect(await readServiceStopState(cell.id)).toEqual(STOPPED_SERVICE_STATE);
+  });
+
+  it("retries signaling a process group after termination fails", async () => {
+    let groupAlive = true;
+    let permissionDenied = true;
+    const handleSignals: Array<number | string | undefined> = [];
+    const directSignals: Array<number | NodeJS.Signals | undefined> = [];
+    const { cell, harness, pid, service } = await createStartedServiceScenario(
+      "template-stop-retry-signals",
+      {
+        emitTerminalExitOnKill: true,
+        stopTimeoutMs: 5,
+        processKill: (signal, exit) => {
+          handleSignals.push(signal);
+          if (signal === "SIGTERM") {
+            exit(TERMINATED_SERVICE_EXIT_CODE);
+          }
+        },
+      }
+    );
+
+    await withProcessKillMock(
+      createProcessGroupKillMock({
+        pid,
+        isLeaderAlive: () => false,
+        isGroupAlive: () => groupAlive,
+        onSignal: (target, signal) => {
+          expect(target).toBe(-pid);
+          directSignals.push(signal);
+          if (permissionDenied) {
+            throw Object.assign(new Error("permission denied"), {
+              code: "EPERM",
+            });
+          }
+          groupAlive = false;
+        },
+      }),
+      async () => {
+        await expect(
+          harness.supervisor.stopCellService(service.id)
+        ).rejects.toThrow("did not exit after SIGKILL");
+        await expect(
+          harness.supervisor.stopCellService(service.id)
+        ).rejects.toThrow("Failed to signal process group");
+        const retained = await getOnlyService(cell.id);
+        expect(retained.status).toBe("error");
+        expect(retained.pid).toBe(pid);
+
+        permissionDenied = false;
+        await harness.supervisor.stopCellService(service.id);
+      }
+    );
+
+    expect(handleSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(directSignals).toEqual(["SIGTERM", "SIGTERM"]);
+    expect(await readServiceStopState(cell.id)).toEqual(STOPPED_SERVICE_STATE);
+  });
+
+  it("retains a service handle while descendants survive leader exit", async () => {
+    let groupAlive = true;
+    const { cell, harness, pid, process, service } =
+      await createStartedServiceScenario("template-descendant-retention", {
+        processKill: (_signal, exit) => {
+          groupAlive = false;
+          exit(0);
+        },
+      });
+    await withServiceProcessGroupMock(
+      pid,
+      () => groupAlive,
+      async () => {
+        process.exit(FAILED_SERVICE_EXIT_CODE);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect((await getOnlyService(cell.id)).status).toBe("running");
+        await harness.supervisor.startCellService(service.id);
+        expect(harness.processes).toHaveLength(1);
+
+        await harness.supervisor.stopCellService(service.id);
+      }
+    );
+
+    const stopped = await getOnlyService(cell.id);
+    expect(stopped.status).toBe("stopped");
+    expect(stopped.pid).toBeNull();
+  });
+
   it("signals process groups when stopping by pid", async () => {
     const pid = 4242;
     await seedPersistedProcessService("svc-stop-group", pid, "owned-instance");
@@ -1157,10 +1323,9 @@ describe("service supervisor", () => {
   ])("$label after the PTY leader exits", async (scenario) => {
     let groupAlive = true;
     const signals: Array<number | string | undefined> = [];
-    const { cell, harness } = await createScenario({
-      templateId: `template-process-group-${scenario.stopTimeoutMs}`,
-      start: true,
-      harnessOptions: {
+    const { harness, pid, service } = await createStartedServiceScenario(
+      `template-process-group-${scenario.stopTimeoutMs}`,
+      {
         stopTimeoutMs: scenario.stopTimeoutMs,
         processKill: (signal, exit) => {
           signals.push(signal);
@@ -1175,22 +1340,11 @@ describe("service supervisor", () => {
             groupAlive = false;
           }
         },
-      },
-    });
-    const service = await getOnlyService(cell.id);
-    const pid = harness.processes[0]?.handle.pid;
-    if (!pid) {
-      throw new Error("Expected active service pid");
-    }
-    await withProcessKillMock(
-      createProcessGroupKillMock({
-        pid,
-        isLeaderAlive: () => false,
-        isGroupAlive: () => groupAlive,
-        onSignal: () => {
-          throw new Error("Unexpected direct process signal");
-        },
-      }),
+      }
+    );
+    await withServiceProcessGroupMock(
+      pid,
+      () => groupAlive,
       () => harness.supervisor.stopCellService(service.id)
     );
 
@@ -2393,6 +2547,15 @@ describe("service supervisor", () => {
     return service;
   }
 
+  async function readServiceStopState(cellId: string) {
+    const service = await getOnlyService(cellId);
+    return {
+      status: service.status,
+      pid: service.pid,
+      lastKnownError: service.lastKnownError,
+    };
+  }
+
   async function getOnlyServiceById(serviceId: string) {
     const [service] = await testDb
       .select()
@@ -2657,6 +2820,24 @@ describe("service supervisor", () => {
     }
   }
 
+  async function withServiceProcessGroupMock<Result>(
+    pid: number,
+    isGroupAlive: () => boolean,
+    action: () => Promise<Result>
+  ): Promise<Result> {
+    return await withProcessKillMock(
+      createProcessGroupKillMock({
+        pid,
+        isLeaderAlive: () => false,
+        isGroupAlive,
+        onSignal: () => {
+          throw new Error("Unexpected direct process signal");
+        },
+      }),
+      action
+    );
+  }
+
   async function withStoppablePersistedProcess<Result>(
     pid: number,
     action: () => Promise<Result>
@@ -2765,6 +2946,29 @@ describe("service supervisor", () => {
       throw new Error(error);
     }
     return call;
+  }
+
+  async function createStartedServiceScenario(
+    templateId: string,
+    harnessOptions: Parameters<typeof createHarness>[0]
+  ) {
+    const scenario = await createScenario({
+      templateId,
+      start: true,
+      template: { services: { server: serviceDefinition() } },
+      harnessOptions,
+    });
+    const service = await getOnlyService(scenario.cell.id);
+    const process = firstProcess(
+      scenario.harness,
+      "Expected active service process"
+    );
+    return {
+      ...scenario,
+      pid: process.handle.pid,
+      process,
+      service,
+    };
   }
 
   function createHarness(

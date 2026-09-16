@@ -1,14 +1,18 @@
 #!/usr/bin/env bun
 
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assertOpenCodeBinary,
   repoRoot as distributionRoot,
   releaseArchivePath as getReleaseArchivePath,
   resolveSupportedArch as getSupportedArch,
   resolveSupportedPlatform as getSupportedPlatform,
+  OPENCODE_PACKAGE_NAME,
+  OPENCODE_VERSION,
+  openCodeReleaseBinaryName,
   run as runDistributionCommand,
 } from "./common";
 
@@ -64,6 +68,30 @@ const ensureAndroidViewerArtifacts = (releaseDir: string) => {
   return { assetsDirectory, viewerBinary };
 };
 
+const ensureOpenCodeArtifact = async (releaseDir: string) => {
+  const binaryName = openCodeReleaseBinaryName(platform);
+  const binaryPath = join(releaseDir, binaryName);
+  await assertOpenCodeBinary(binaryPath);
+
+  const manifest = JSON.parse(
+    await readFile(join(releaseDir, "manifest.json"), "utf8")
+  ) as Record<string, unknown>;
+  const expectedManifest = {
+    opencodeBinary: binaryName,
+    opencodePackage: OPENCODE_PACKAGE_NAME,
+    opencodeVersion: OPENCODE_VERSION,
+  };
+  for (const [key, value] of Object.entries(expectedManifest)) {
+    if (manifest[key] !== value) {
+      throw new Error(
+        `Installed release manifest has ${key}=${JSON.stringify(manifest[key])}; expected ${JSON.stringify(value)}`
+      );
+    }
+  }
+
+  return binaryPath;
+};
+
 console.log("Building installer artifacts...");
 runDistributionCommand(["bun", "run", "build:installer"]);
 
@@ -80,7 +108,6 @@ try {
     HIVE_HOME: hiveHome,
     HIVE_BIN_DIR: hiveBinDir,
     HIVE_INSTALL_URL: `file://${releaseArchive}`,
-    HIVE_SKIP_OPENCODE_INSTALL: "1",
     PATH: `${hiveBinDir}:${process.env.PATH ?? ""}`,
   };
 
@@ -98,9 +125,23 @@ try {
   console.log("Validating installed CLI binary...");
   runDistributionCommand([installedBinary, "info"], { env: installEnv });
 
-  const currentRelease = join(hiveHome, "current");
+  const currentRelease = await realpath(join(hiveHome, "current"));
   ensureDesktopArtifact(currentRelease);
   const androidViewer = ensureAndroidViewerArtifacts(currentRelease);
+
+  console.log("Validating installed OpenCode 2 binary...");
+  const openCodeBinary = await ensureOpenCodeArtifact(currentRelease);
+  const exposedOpenCodeBinary = join(
+    hiveBinDir,
+    openCodeReleaseBinaryName(platform)
+  );
+  await assertOpenCodeBinary(exposedOpenCodeBinary);
+  const hiveEnv = await readFile(join(currentRelease, "hive.env"), "utf8");
+  if (!hiveEnv.includes(`HIVE_OPENCODE_BIN="${openCodeBinary}"`)) {
+    throw new Error(
+      `Installed hive.env does not point HIVE_OPENCODE_BIN at ${openCodeBinary}`
+    );
+  }
 
   console.log("Validating installed Android viewer binary...");
   runDistributionCommand([androidViewer.viewerBinary, "--help"], {

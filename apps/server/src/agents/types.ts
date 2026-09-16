@@ -1,20 +1,6 @@
 /**
- * Application-layer types for agent sessions and messages.
- *
- * These types extend the OpenCode SDK types with Hive-specific concerns:
- * - Track which cell owns a session (cellId, templateId)
- * - Add custom status tracking beyond SDK's session lifecycle
- * - Serialize SDK types into simplified API responses
- *
- * Note: These are NOT redundant with SDK types - they represent our domain model
- * on top of the OpenCode SDK primitives.
- */
-
-import type { Event as OpencodeEvent, Part } from "@opencode-ai/sdk";
-
-/**
  * Custom session statuses that track Hive-specific workflow states.
- * These are distinct from OpenCode SDK's internal session states.
+ * These are distinct from OpenCode's internal session states.
  */
 const agentSessionStatuses = [
   "starting",
@@ -32,7 +18,12 @@ export type AgentMode = (typeof agentModes)[number];
 /**
  * Message roles - subset of what OpenCode supports, focused on our use cases.
  */
-type AgentMessageRole = "user" | "assistant" | "system";
+export type AgentMessageRole = "user" | "assistant" | "system";
+
+export type AgentMessagePart = {
+  type: string;
+  [key: string]: unknown;
+};
 
 /**
  * Message states - our interpretation of OpenCode message lifecycle.
@@ -42,7 +33,7 @@ export type AgentMessageState = "pending" | "streaming" | "completed" | "error";
 /**
  * Application model for agent sessions.
  *
- * Extends OpenCode SDK's Session type with:
+ * Adapts OpenCode session data with:
  * - cellId: Links session to a Hive cell
  * - templateId: Tracks which template config was used
  * - provider: AI provider (anthropic, openai, etc.)
@@ -69,7 +60,7 @@ export type AgentSessionRecord = {
 /**
  * Serialized/normalized messages for API responses.
  *
- * Simplifies OpenCode SDK's Message type by:
+ * Simplifies OpenCode message data by:
  * - Extracting text content from parts for convenience
  * - Adding state interpretation (pending, streaming, completed, error)
  * - Keeping parts array for detailed access when needed
@@ -81,29 +72,24 @@ export type AgentMessageRecord = {
   content: string | null;
   state: AgentMessageState;
   createdAt: string;
-  parts: Part[]; // From OpenCode SDK
+  parts: AgentMessagePart[];
   parentId?: string | null;
   errorName?: string | null;
   errorMessage?: string | null;
 };
 
-type AgentCompactionStats = {
-  count: number;
-  lastCompactionAt: string | null;
-};
-
-/**
- * Stream events sent over SSE to clients.
- * Combines our custom events (history, status) with OpenCode SDK events.
- */
 export type AgentStreamEvent =
-  | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
+  | {
+      type: "input_required";
+      sessionId: string;
+      permissionId: string;
+      title: string;
+      kind: "permission" | "question";
+    }
   | {
       type: "mode";
       startMode: AgentMode;
       currentMode: AgentMode;
       modeUpdatedAt?: string;
-    }
-  | { type: "session.compaction"; properties: AgentCompactionStats }
-  | OpencodeEvent;
+    };

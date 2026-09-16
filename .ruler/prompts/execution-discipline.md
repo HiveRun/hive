@@ -2,6 +2,7 @@
 
 - Translate substantial requests into explicit acceptance criteria before implementation. Keep every criterion open until it has fresh evidence or a clearly reported blocker.
 - Do not declare work complete because the code compiles, unit tests pass, or the happy path works. Verify the highest-risk shipped boundary affected by the change: compiled binary, installer, browser, Electron, process lifecycle, network, or device.
+- Before creating or updating a PR, inspect the CI workflow and run every merge-gating command affected by the diff. Jobs skipped on pull-request events are still mandatory local verification; if a required gate cannot run, report the exact blocker and do not describe the PR as ready or fully tested.
 - Never silently reduce scope to get a green result. Do not replace a packaged/runtime test with a dev server, mock the boundary under test, weaken assertions, remove coverage, skip cleanup, or substitute a partial workaround for the requested behavior.
 - Do not add retries, sleeps, broad catches, fallback paths, or compatibility layers merely to hide a failure. Use them only when the product requirement calls for them and the underlying failure mode is understood.
 - Treat each failed verification as diagnostic evidence. Read the complete error, inspect logs/screenshots/video/traces and persisted state, identify the violated invariant, fix the root cause, and rerun the exact failing path.

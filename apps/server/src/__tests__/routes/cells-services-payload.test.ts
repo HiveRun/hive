@@ -1,11 +1,13 @@
 import { createServer } from "node:net";
 
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ProcessService } from "../../config/schema";
+import { cellServices } from "../../schema/services";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
-import { setupTestDb } from "../test-db";
+import { setupTestDb, testDb } from "../test-db";
 import {
   clearRouteServicesAndCells,
   createCellRouteTestApp,
@@ -24,6 +26,7 @@ const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
 const EXPECTED_CPU_PERCENT = 12.3;
 const EXPECTED_RSS_BYTES = 34_560_000;
+const CONCURRENT_STALE_PID = 999_998;
 
 const getFirstService = <T>(services: T[]): T => {
   const first = services[0];
@@ -82,7 +85,8 @@ function createRuntimeHarness() {
 }
 
 function createMinimalDependencies(
-  harness: ReturnType<typeof createRuntimeHarness>
+  harness: ReturnType<typeof createRuntimeHarness>,
+  overrides: Record<string, unknown> = {}
 ): any {
   return createCellRouteTestDependencies({
     cellId: TEST_CELL_ID,
@@ -100,6 +104,7 @@ function createMinimalDependencies(
         harness.getChatSession(cellId),
       sampleServiceResources: (pids: number[]) =>
         Promise.resolve(harness.sampleServiceResources(pids)),
+      ...overrides,
     },
   });
 }
@@ -409,5 +414,83 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.cpuPercent).toBeNull();
     expect(service.rssBytes).toBeNull();
     expect(service.resourceUnavailableReason).toBe("process_not_alive");
+  });
+
+  it("preserves explicit service errors while their process tree is alive", async () => {
+    const lastKnownError = "Failed to stop service after SIGKILL";
+    await insertCellAndServiceRecords("failed-stop", {
+      status: "error",
+      pid: process.pid,
+    });
+    await testDb
+      .update(cellServices)
+      .set({ lastKnownError })
+      .where(eq(cellServices.id, TEST_SERVICE_ID));
+
+    const service = await readFirstServicePayload<{
+      status: string;
+      lastKnownError: string | null;
+    }>(app);
+    expect(service.status).toBe("error");
+    expect(service.lastKnownError).toBe(lastKnownError);
+
+    const [persisted] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, TEST_SERVICE_ID));
+    expect(persisted?.status).toBe("error");
+    expect(persisted?.lastKnownError).toBe(lastKnownError);
+  });
+
+  it("reloads service state after repeated reconciliation conflicts", async () => {
+    const stalePid = 999_999;
+    await insertCellAndServiceRecords("reconciled-process", {
+      status: "running",
+      pid: stalePid,
+    });
+    const concurrentPids = [CONCURRENT_STALE_PID, process.pid];
+    app = createCellRouteTestApp(
+      createMinimalDependencies(harness, {
+        getServiceTerminalSession: () => {
+          const concurrentPid = concurrentPids.shift();
+          if (concurrentPid) {
+            testDb
+              .update(cellServices)
+              .set({ status: "running", pid: concurrentPid })
+              .where(eq(cellServices.id, TEST_SERVICE_ID))
+              .run();
+          }
+          return null;
+        },
+      })
+    );
+
+    const service = await readFirstServicePayload<{
+      status: string;
+      pid?: number;
+    }>(app);
+
+    expect(service.status).toBe("running");
+    expect(service.pid).toBe(process.pid);
+  });
+
+  it("omits a service deleted during runtime reconciliation", async () => {
+    await insertCellAndServiceRecords("deleted-process", {
+      status: "pending",
+    });
+    app = createCellRouteTestApp(
+      createMinimalDependencies(harness, {
+        getServiceTerminalSession: () => {
+          testDb
+            .delete(cellServices)
+            .where(eq(cellServices.id, TEST_SERVICE_ID))
+            .run();
+          return null;
+        },
+      })
+    );
+
+    const payload = await readServicesPayload<{ services: unknown[] }>(app);
+    expect(payload.services).toEqual([]);
   });
 });

@@ -203,7 +203,7 @@ export async function createFixtureWorkspace(
   );
 
   await writeFile(
-    join(options.workspaceRoot, "@opencode.json"),
+    join(options.workspaceRoot, "opencode.json"),
     `${JSON.stringify({ model: "opencode/big-pickle" }, null, 2)}\n`,
     "utf8"
   );

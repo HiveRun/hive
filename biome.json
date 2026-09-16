@@ -17,6 +17,7 @@
       "!**/.wrangler",
       "!**/.alchemy",
       "!**/.svelte-kit",
+      "!**/.opencode/plugins/hive",
       "!**/wrangler.jsonc",
       "!**/.source"
     ]

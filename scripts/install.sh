@@ -10,70 +10,13 @@ RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
 VERSION="${HIVE_VERSION:-latest}"
 CUSTOM_URL="${HIVE_INSTALL_URL:-}"
-OPENCODE_INSTALL_URL="${HIVE_OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
-SKIP_OPENCODE_INSTALL="${HIVE_SKIP_OPENCODE_INSTALL:-0}"
-OPENCODE_BIN="${HIVE_OPENCODE_BIN:-}"
+EXPECTED_OPENCODE_VERSION="opencode2 v0.0.0-beta-18866"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Error: missing required command '$1'" >&2
     exit 1
   fi
-}
-
-resolve_opencode_bin() {
-  if [ -n "$OPENCODE_BIN" ] && [ -x "$OPENCODE_BIN" ]; then
-    printf '%s\n' "$OPENCODE_BIN"
-    return 0
-  fi
-
-  if command -v opencode >/dev/null 2>&1; then
-    command -v opencode
-    return 0
-  fi
-
-  for candidate in "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "$HOME/bin/opencode"; do
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-ensure_opencode_cli() {
-  if [ "$SKIP_OPENCODE_INSTALL" = "1" ]; then
-    if resolved=$(resolve_opencode_bin); then
-      OPENCODE_BIN="$resolved"
-      echo "Using existing OpenCode CLI at $OPENCODE_BIN"
-    else
-      echo "Skipping OpenCode CLI install (HIVE_SKIP_OPENCODE_INSTALL=1)"
-    fi
-    return
-  fi
-
-  if resolved=$(resolve_opencode_bin); then
-    OPENCODE_BIN="$resolved"
-    echo "Using existing OpenCode CLI at $OPENCODE_BIN"
-    return
-  fi
-
-  echo "OpenCode CLI not found. Installing via $OPENCODE_INSTALL_URL"
-  if ! curl -fsSL "$OPENCODE_INSTALL_URL" | bash; then
-    echo "Error: failed to install OpenCode CLI" >&2
-    exit 1
-  fi
-
-  if resolved=$(resolve_opencode_bin); then
-    OPENCODE_BIN="$resolved"
-    echo "Installed OpenCode CLI at $OPENCODE_BIN"
-    return
-  fi
-
-  echo "Error: OpenCode CLI is still unavailable after install" >&2
-  echo "Try running: curl -fsSL https://opencode.ai/install | bash" >&2
-  exit 1
 }
 
 probe_hive_health() {
@@ -292,7 +235,6 @@ fi
 require curl
 require tar
 mkdir -p "$BIN_DIR" "$RELEASES_DIR" "$STATE_DIR"
-ensure_opencode_cli
 stop_running_hive
 
 workdir=$(mktemp -d)
@@ -329,6 +271,25 @@ fi
 
 mv "$src" "$target"
 
+opencode_binary_name="opencode2"
+opencode_binary="$target/$opencode_binary_name"
+opencode_launcher="$BIN_DIR/$opencode_binary_name"
+if [ ! -x "$opencode_binary" ]; then
+  echo "Error: bundled OpenCode 2 binary missing or not executable at $opencode_binary" >&2
+  exit 1
+fi
+
+if ! opencode_version_output=$("$opencode_binary" --version 2>&1); then
+  echo "Error: bundled OpenCode 2 binary cannot run on this platform" >&2
+  exit 1
+fi
+opencode_version_output="${opencode_version_output#"${opencode_version_output%%[![:space:]]*}"}"
+opencode_version_output="${opencode_version_output%"${opencode_version_output##*[![:space:]]}"}"
+if [ "$opencode_version_output" != "$EXPECTED_OPENCODE_VERSION" ]; then
+  echo "Error: bundled OpenCode 2 version mismatch: expected '$EXPECTED_OPENCODE_VERSION', received '$opencode_version_output'" >&2
+  exit 1
+fi
+
 seed_hive_env "$target/hive.env"
 
 if ! env_file_has_key "$target/hive.env" "DATABASE_URL"; then
@@ -337,6 +298,7 @@ fi
 
 write_env_var "$target/hive.env" "HIVE_WEB_DIST" "$target/public"
 write_env_var "$target/hive.env" "HIVE_MIGRATIONS_DIR" "$target/migrations"
+write_env_var "$target/hive.env" "HIVE_OPENCODE_BIN" "$opencode_binary"
 if ! env_file_has_key "$target/hive.env" "HIVE_LOG_DIR"; then
   write_env_var "$target/hive.env" "HIVE_LOG_DIR" "$INSTALL_ROOT/logs"
 fi
@@ -347,13 +309,31 @@ if [ -n "$install_command_override" ]; then
   write_env_var "$target/hive.env" "HIVE_INSTALL_COMMAND" "$install_command_override"
 fi
 
-if [ -n "$OPENCODE_BIN" ] && ! env_file_has_key "$target/hive.env" "HIVE_OPENCODE_BIN"; then
-  write_env_var "$target/hive.env" "HIVE_OPENCODE_BIN" "$OPENCODE_BIN"
+if [ -e "$opencode_launcher" ] || [ -L "$opencode_launcher" ]; then
+  managed_opencode_launcher=0
+  if [ -L "$opencode_launcher" ]; then
+    existing_opencode_target=$(readlink "$opencode_launcher")
+    case "$existing_opencode_target" in
+      "$INSTALL_ROOT"/*) managed_opencode_launcher=1 ;;
+    esac
+  elif grep -Fxq '# Managed by Hive: opencode2' "$opencode_launcher" 2>/dev/null; then
+    managed_opencode_launcher=1
+  fi
+
+  if [ "$managed_opencode_launcher" != "1" ]; then
+    echo "Error: refusing to replace unmanaged OpenCode command at $opencode_launcher" >&2
+    exit 1
+  fi
 fi
 
 ln -snf "$target" "$INSTALL_ROOT/current"
 ln -snf "$target/hive" "$BIN_DIR/hive"
+rm -f "$opencode_launcher"
+printf '#!/usr/bin/env bash\n# Managed by Hive: opencode2\nexport OPENCODE_DISABLE_AUTOUPDATE=1\nexec %q "$@"\n' "$opencode_binary" > "$opencode_launcher"
 chmod +x "$BIN_DIR/hive"
+chmod +x "$opencode_launcher"
+
+echo "Using bundled OpenCode 2 CLI at $opencode_binary"
 
 configure_shell_path
 

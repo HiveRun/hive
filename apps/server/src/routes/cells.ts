@@ -3,10 +3,11 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
+import { resolveOpencodeBinary } from "../agents/opencode-binary";
 import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
-import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
+import { getSharedOpencodeServerConnection } from "../agents/opencode-server";
 import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
@@ -118,12 +119,11 @@ import type {
 } from "../services/service-terminal";
 import type {
   EnsureCellServicesTimingEvent,
-  ServiceSupervisorError,
   ServiceSupervisorService as ServiceSupervisorServiceType,
 } from "../services/supervisor";
 import {
   CommandExecutionError,
-  isProcessAlive,
+  isProcessTreeAlive,
   ServiceSupervisorService,
   TemplateSetupError,
 } from "../services/supervisor";
@@ -263,8 +263,8 @@ type CellRouteDependencies = {
     workspacePath: string;
     opencodeSessionId: string;
     opencodeServerUrl: string;
+    opencodeServerPassword?: string;
     opencodeThemeMode?: OpencodeThemeMode;
-    preferredModel?: { providerId: string; modelId: string; variant?: string };
     startMode?: AgentMode;
     environment: Record<string, string>;
   }) => ChatTerminalSession;
@@ -742,9 +742,9 @@ async function serializeServicesForCell(
   cellId: string
 ): Promise<CellServiceListResponse> {
   const rows = await fetchServiceRows(database, cellId);
-  const services = await Promise.all(
-    rows.map((row) => serializeService(deps, database, row))
-  );
+  const services = (
+    await Promise.all(rows.map((row) => serializeService(deps, database, row)))
+  ).filter((service): service is CellServiceResponse => service !== null);
   return { services };
 }
 
@@ -755,32 +755,6 @@ function rejectDeletingCell(status: string, set: RouteSet) {
   set.status = HTTP_STATUS.CONFLICT;
   return { message: "Cell is being deleted" } satisfies MessageResponse;
 }
-
-const isServiceSupervisorError = (
-  error: unknown
-): error is ServiceSupervisorError =>
-  typeof error === "object" &&
-  error !== null &&
-  (error as { _tag?: string })._tag === "ServiceSupervisorError";
-
-const unwrapSupervisorError = (error: unknown): unknown => {
-  if (isServiceSupervisorError(error)) {
-    return error.cause;
-  }
-
-  if (error instanceof Error) {
-    try {
-      const parsed = JSON.parse(error.message);
-      if (isServiceSupervisorError(parsed)) {
-        return parsed.cause;
-      }
-    } catch {
-      // no-op
-    }
-  }
-
-  return error;
-};
 
 async function recordServiceActivity(args: {
   deps: CellRouteDependencies;
@@ -843,11 +817,11 @@ function handleRouteActionError(args: {
   logContext: Record<string, unknown>;
   errorMessage: string;
 }) {
-  const error = unwrapSupervisorError(args.error);
   args.set.status = HTTP_STATUS.INTERNAL_ERROR;
   args.log.error({ error: args.error, ...args.logContext }, args.errorMessage);
   return {
-    message: error instanceof Error ? error.message : args.errorMessage,
+    message:
+      args.error instanceof Error ? args.error.message : args.errorMessage,
   } satisfies MessageResponse;
 }
 
@@ -999,7 +973,16 @@ async function runSingleServiceAction(args: {
         return { message: "Service not found" } satisfies MessageResponse;
       }
 
-      return await serializeService(args.deps, args.deps.db, updated);
+      const serialized = await serializeService(
+        args.deps,
+        args.deps.db,
+        updated
+      );
+      if (!serialized) {
+        args.set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" } satisfies MessageResponse;
+      }
+      return serialized;
     },
   });
 }
@@ -1140,28 +1123,12 @@ function buildOpencodeCommand(
     return null;
   }
 
-  const serverUrl =
-    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
-  if (!serverUrl) {
-    return [
-      "opencode",
-      shellQuote(cell.workspacePath),
-      "--session",
-      shellQuote(cell.opencodeSessionId),
-    ].join(" ");
-  }
-
-  const args = [
-    "opencode",
-    "attach",
-    shellQuote(serverUrl),
-    "--dir",
-    shellQuote(cell.workspacePath),
+  return [
+    shellQuote(resolveOpencodeBinary()),
     "--session",
     shellQuote(cell.opencodeSessionId),
-  ];
-
-  return args.join(" ");
+    shellQuote(cell.workspacePath),
+  ].join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -1404,8 +1371,9 @@ async function ensureChatTerminalSessionForCell(
   cell: typeof cells.$inferSelect,
   themeMode: OpencodeThemeMode
 ) {
-  const serverUrl =
-    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  const explicitServerUrl = process.env.HIVE_OPENCODE_SERVER_URL?.trim();
+  const sharedConnection = getSharedOpencodeServerConnection();
+  const serverUrl = explicitServerUrl || sharedConnection?.url;
 
   if (!serverUrl) {
     throw new Error("Shared OpenCode server is not running");
@@ -1413,19 +1381,7 @@ async function ensureChatTerminalSessionForCell(
 
   const chatTerminal = getChatTerminalDependencies(deps);
   const agentSession = await deps.ensureAgentSession(cell.id);
-  const preferredProviderId =
-    agentSession.modelProviderId ?? agentSession.provider;
   const startMode = agentSession.currentMode ?? agentSession.startMode;
-  const preferredModel =
-    agentSession.modelId && preferredProviderId
-      ? {
-          modelId: agentSession.modelId,
-          providerId: preferredProviderId,
-          ...(agentSession.modelVariant
-            ? { variant: agentSession.modelVariant }
-            : {}),
-        }
-      : undefined;
   const session = await runWithCellCleanupLock(cell.id, async () => {
     const currentCell = await requireCellAvailableForRuntime(deps.db, cell.id);
     const environment = await resolveCellTerminalEnvironment(
@@ -1437,8 +1393,10 @@ async function ensureChatTerminalSessionForCell(
       workspacePath: currentCell.workspacePath,
       opencodeSessionId: agentSession.id,
       opencodeServerUrl: serverUrl,
+      opencodeServerPassword: explicitServerUrl
+        ? process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
+        : sharedConnection?.password,
       opencodeThemeMode: themeMode,
-      preferredModel,
       environment,
       ...(startMode ? { startMode } : {}),
     });
@@ -2707,14 +2665,18 @@ export function createCellsRoutes(
             const resourcesByPid = includeResources
               ? await sampleServiceResources(deps, rows)
               : new Map<number, ProcessResourceSnapshot>();
-            const services = await Promise.all(
-              rows.map((row) =>
-                serializeService(deps, database, row, {
-                  logOptions,
-                  includeResources,
-                  resourcesByPid,
-                })
+            const services = (
+              await Promise.all(
+                rows.map((row) =>
+                  serializeService(deps, database, row, {
+                    logOptions,
+                    includeResources,
+                    resourcesByPid,
+                  })
+                )
               )
+            ).filter(
+              (service): service is CellServiceResponse => service !== null
             );
 
             const audit = readHiveAuditHeaders(request);
@@ -2915,6 +2877,11 @@ export function createCellsRoutes(
 
             const encoder = new TextEncoder();
             let cleanup: (() => void) | undefined;
+            const serviceSnapshotSequence: ServiceSnapshotSequence = {
+              current: 0,
+              latestBulk: 0,
+              latestByService: new Map(),
+            };
 
             const body = new ReadableStream<Uint8Array>({
               start(controller) {
@@ -2924,6 +2891,10 @@ export function createCellsRoutes(
                 };
 
                 const pushSnapshot = async (serviceId: string) => {
+                  const generation = beginServiceSnapshot(
+                    serviceSnapshotSequence,
+                    serviceId
+                  );
                   try {
                     const row = await fetchServiceRow(
                       database,
@@ -2945,7 +2916,15 @@ export function createCellsRoutes(
                         resourcesByPid,
                       }
                     );
-                    sendEvent("service", JSON.stringify(payload));
+                    sendCurrentServiceSnapshot({
+                      bulk: false,
+                      generation,
+                      payload,
+                      sequence: serviceSnapshotSequence,
+                      send: (current) =>
+                        sendEvent("service", JSON.stringify(current)),
+                      serviceId,
+                    });
                   } catch (error) {
                     log.error(
                       { error, serviceId },
@@ -2970,6 +2949,9 @@ export function createCellsRoutes(
                 sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
 
                 const pushAllSnapshots = async () => {
+                  const generation = beginBulkServiceSnapshot(
+                    serviceSnapshotSequence
+                  );
                   try {
                     const rows = await fetchServiceRows(database, params.id);
                     const resourcesByPid = includeResources
@@ -2985,7 +2967,15 @@ export function createCellsRoutes(
                           resourcesByPid,
                         }
                       );
-                      sendEvent("service", JSON.stringify(payload));
+                      sendCurrentServiceSnapshot({
+                        bulk: true,
+                        generation,
+                        payload,
+                        sequence: serviceSnapshotSequence,
+                        send: (current) =>
+                          sendEvent("service", JSON.stringify(current)),
+                        serviceId: row.service.id,
+                      });
                     }
                     sendEvent(
                       "snapshot",
@@ -5462,88 +5452,10 @@ export async function resumeSpawningCells(
   await resumeDeletingCells(deps);
 }
 
-const reviveTemplateSetupError = (
-  error: unknown
-): TemplateSetupError | null => {
-  if (error instanceof TemplateSetupError) {
-    return error;
-  }
-
-  if (
-    isNamedErrorLike(error, "TemplateSetupError") &&
-    typeof (error as { command?: unknown }).command === "string" &&
-    typeof (error as { templateId?: unknown }).templateId === "string" &&
-    typeof (error as { workspacePath?: unknown }).workspacePath === "string"
-  ) {
-    const templateLike = error as {
-      command: string;
-      templateId: string;
-      workspacePath: string;
-      cause?: unknown;
-      exitCode?: number;
-    };
-
-    return new TemplateSetupError({
-      command: templateLike.command,
-      templateId: templateLike.templateId,
-      workspacePath: templateLike.workspacePath,
-      cause: templateLike.cause,
-      exitCode:
-        typeof templateLike.exitCode === "number"
-          ? templateLike.exitCode
-          : undefined,
-    });
-  }
-
-  return null;
-};
-
-const isNamedErrorLike = (error: unknown, name: string) =>
-  Boolean(
-    error &&
-      typeof error === "object" &&
-      (error as { name?: string }).name === name
-  );
-
-const reviveCommandExecutionError = (
-  error: unknown
-): CommandExecutionError | null => {
-  if (error instanceof CommandExecutionError) {
-    return error;
-  }
-
-  if (
-    isNamedErrorLike(error, "CommandExecutionError") &&
-    typeof (error as { command?: unknown }).command === "string" &&
-    typeof (error as { cwd?: unknown }).cwd === "string" &&
-    typeof (error as { exitCode?: unknown }).exitCode === "number"
-  ) {
-    const commandLike = error as {
-      command: string;
-      cwd: string;
-      exitCode: number;
-    };
-
-    return new CommandExecutionError(commandLike);
-  }
-
-  return null;
-};
-
-const normalizeFailureError = (error: unknown): unknown => {
-  const unwrapped = unwrapSupervisorError(error);
-  return (
-    reviveTemplateSetupError(unwrapped) ??
-    reviveCommandExecutionError(unwrapped) ??
-    unwrapped
-  );
-};
-
 function shouldPreserveCellWorkspace(
   error: unknown
 ): error is TemplateSetupError {
-  const underlying = normalizeFailureError(error);
-  return underlying instanceof TemplateSetupError;
+  return error instanceof TemplateSetupError;
 }
 
 function deriveSetupErrorDetails(payload: ErrorPayload): string {
@@ -5609,22 +5521,7 @@ const buildTemplateSetupErrorPayload = (
     `Command: ${error.command}`,
   ];
 
-  let exitCode: number | undefined;
-  if (typeof error.exitCode === "number") {
-    exitCode = error.exitCode;
-  } else {
-    const causeError = unwrapSupervisorError(error.cause);
-    const nestedCommandError = reviveCommandExecutionError(causeError);
-    if (nestedCommandError) {
-      exitCode = nestedCommandError.exitCode;
-    } else if (
-      causeError &&
-      typeof causeError === "object" &&
-      typeof (causeError as { exitCode?: unknown }).exitCode === "number"
-    ) {
-      exitCode = (causeError as { exitCode: number }).exitCode;
-    }
-  }
+  const exitCode = error.exitCode;
 
   if (typeof exitCode === "number") {
     details.push(`exit code ${exitCode}`);
@@ -5674,23 +5571,21 @@ const buildCommandExecutionErrorPayload = (
 };
 
 function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
-  const underlyingError = normalizeFailureError(error);
-
-  const templatePayload = buildTemplateSetupErrorPayload(underlyingError);
+  const templatePayload = buildTemplateSetupErrorPayload(error);
   if (templatePayload) {
     return templatePayload;
   }
 
-  const commandPayload = buildCommandExecutionErrorPayload(underlyingError);
+  const commandPayload = buildCommandExecutionErrorPayload(error);
   if (commandPayload) {
     return commandPayload;
   }
 
-  if (underlyingError instanceof Error) {
-    const stack = formatStackTrace(underlyingError);
+  if (error instanceof Error) {
+    const stack = formatStackTrace(error);
     return stack
-      ? { message: underlyingError.message, details: stack }
-      : { message: underlyingError.message };
+      ? { message: error.message, details: stack }
+      : { message: error.message };
   }
 
   return { message: "Failed to create cell" };
@@ -5850,7 +5745,7 @@ function deriveTrackedServiceProcess(
 ): ResourceTrackedProcess {
   const runtimeSession = deps.getServiceTerminalSession(row.service.id);
   const processAlive =
-    runtimeSession?.status === "running" || isProcessAlive(row.service.pid);
+    runtimeSession?.status === "running" || isProcessTreeAlive(row.service.pid);
 
   let status = row.service.status;
   if (row.service.status === "running" && !processAlive) {
@@ -5882,7 +5777,53 @@ type SerializeServiceOptions = {
   logOptions?: LogTailOptions;
   includeResources?: boolean;
   resourcesByPid?: Map<number, ProcessResourceSnapshot>;
+  reconciliationAttempt?: number;
+  skipRuntimeReconciliation?: boolean;
 };
+
+const MAX_SERVICE_RECONCILIATION_ATTEMPTS = 1;
+const PROCESS_EXITED_UNEXPECTEDLY_ERROR = "Process exited unexpectedly";
+
+type ServiceSnapshotSequence = {
+  current: number;
+  latestBulk: number;
+  latestByService: Map<string, number>;
+};
+
+function beginServiceSnapshot(
+  sequence: ServiceSnapshotSequence,
+  serviceId: string
+): number {
+  sequence.current += 1;
+  sequence.latestByService.set(serviceId, sequence.current);
+  return sequence.current;
+}
+
+function beginBulkServiceSnapshot(sequence: ServiceSnapshotSequence): number {
+  sequence.current += 1;
+  sequence.latestBulk = sequence.current;
+  return sequence.current;
+}
+
+function sendCurrentServiceSnapshot(args: {
+  bulk: boolean;
+  generation: number;
+  payload: CellServiceResponse | null;
+  sequence: ServiceSnapshotSequence;
+  send: (payload: CellServiceResponse) => void;
+  serviceId: string;
+}): void {
+  const latestServiceGeneration =
+    args.sequence.latestByService.get(args.serviceId) ?? 0;
+  const current = args.bulk
+    ? args.sequence.latestBulk === args.generation &&
+      latestServiceGeneration <= args.generation
+    : latestServiceGeneration === args.generation &&
+      args.sequence.latestBulk <= args.generation;
+  if (args.payload && current) {
+    args.send(args.payload);
+  }
+}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: normalizes persisted service state against runtime process state.
 async function serializeService(
@@ -5890,7 +5831,7 @@ async function serializeService(
   database: DatabaseClient,
   row: ServiceRow,
   options?: SerializeServiceOptions
-) {
+): Promise<CellServiceResponse | null> {
   const includeResources = options?.includeResources ?? false;
   const { service } = row;
   const output = deps.readServiceTerminalOutput(service.id);
@@ -5898,9 +5839,12 @@ async function serializeService(
     output.length > 0 ? output : null,
     options?.logOptions
   );
-  const runtimeSession = deps.getServiceTerminalSession(service.id);
+  const reconcileRuntimeState = !options?.skipRuntimeReconciliation;
+  const runtimeSession = reconcileRuntimeState
+    ? deps.getServiceTerminalSession(service.id)
+    : null;
   const processAlive =
-    runtimeSession?.status === "running" || isProcessAlive(service.pid);
+    runtimeSession?.status === "running" || isProcessTreeAlive(service.pid);
   const persistedPorts = await database
     .select()
     .from(cellServicePorts)
@@ -5953,20 +5897,28 @@ async function serializeService(
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
 
-  if (service.status === "running" && !processAlive) {
+  if (reconcileRuntimeState && service.status === "running" && !processAlive) {
     derivedStatus = "error";
     derivedLastKnownError =
-      service.lastKnownError ?? "Process exited unexpectedly";
-  } else if (service.status === "error" && processAlive) {
+      service.lastKnownError ?? PROCESS_EXITED_UNEXPECTEDLY_ERROR;
+  } else if (
+    reconcileRuntimeState &&
+    service.status === "error" &&
+    processAlive &&
+    service.lastKnownError === PROCESS_EXITED_UNEXPECTEDLY_ERROR
+  ) {
     derivedStatus = "running";
     derivedLastKnownError = null;
   }
 
-  let derivedPid: number | null = null;
-  if (runtimeSession?.status === "running") {
-    derivedPid = runtimeSession.pid;
-  } else if (processAlive) {
-    derivedPid = service.pid;
+  let derivedPid: number | null = service.pid ?? null;
+  if (reconcileRuntimeState) {
+    derivedPid = null;
+    if (runtimeSession?.status === "running") {
+      derivedPid = runtimeSession.pid;
+    } else if (processAlive) {
+      derivedPid = service.pid;
+    }
   }
 
   const resourceSnapshot = includeResources
@@ -6008,9 +5960,10 @@ async function serializeService(
     derivedStatus !== service.status ||
     derivedLastKnownError !== service.lastKnownError ||
     derivedPid !== (service.pid ?? null);
+  let existenceConfirmed = false;
 
-  if (shouldPersist) {
-    await database
+  if (shouldPersist && reconcileRuntimeState) {
+    const persisted = await database
       .update(cellServices)
       .set({
         status: derivedStatus,
@@ -6018,7 +5971,44 @@ async function serializeService(
         pid: derivedPid,
         updatedAt: new Date(),
       })
-      .where(eq(cellServices.id, service.id));
+      .where(
+        and(
+          eq(cellServices.id, service.id),
+          eq(cellServices.status, service.status),
+          service.pid == null
+            ? isNull(cellServices.pid)
+            : eq(cellServices.pid, service.pid),
+          service.lastKnownError == null
+            ? isNull(cellServices.lastKnownError)
+            : eq(cellServices.lastKnownError, service.lastKnownError)
+        )
+      )
+      .returning({ id: cellServices.id });
+    const reconciliationAttempt = options?.reconciliationAttempt ?? 0;
+    if (persisted.length === 0) {
+      const latest = await fetchServiceRow(database, row.cell.id, service.id);
+      if (!latest) {
+        return null;
+      }
+      return await serializeService(deps, database, latest, {
+        ...options,
+        reconciliationAttempt: reconciliationAttempt + 1,
+        skipRuntimeReconciliation:
+          reconciliationAttempt >= MAX_SERVICE_RECONCILIATION_ATTEMPTS,
+      });
+    }
+    existenceConfirmed = true;
+  }
+
+  if (!existenceConfirmed) {
+    const [existing] = await database
+      .select({ id: cellServices.id })
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id))
+      .limit(1);
+    if (!existing) {
+      return null;
+    }
   }
 
   return {

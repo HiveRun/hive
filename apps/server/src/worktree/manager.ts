@@ -1,48 +1,16 @@
 import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync, constants as fsConstants } from "node:fs";
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { glob } from "tinyglobby";
 import {
-  generateHiveToolConfig,
-  HIVE_TOOL_SOURCE,
+  ensureHiveOpencodePlugin,
+  ensureHiveToolConfig,
+  resolveHiveServerUrl,
 } from "../agents/hive-opencode-tool";
 import { hiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
-
-function formatHiveServerHostname(hostname: string): string {
-  if (hostname === "0.0.0.0") {
-    return "127.0.0.1";
-  }
-  if (hostname === "::") {
-    return "[::1]";
-  }
-  return hostname.includes(":") ? `[${hostname}]` : hostname;
-}
-
-/**
- * Resolves the Hive server URL for tool configuration.
- * This URL is written to .hive/config.json in each worktree so tools
- * can communicate back to the Hive server.
- *
- * Uses HIVE_URL if set, otherwise constructs from PORT (defaulting to 3000).
- *
- * Defaults to the server's deterministic IPv4 loopback binding.
- */
-export function resolveHiveServerUrl(): string {
-  if (process.env.HIVE_URL) {
-    return process.env.HIVE_URL;
-  }
-
-  const port = process.env.PORT ?? "3000";
-  const configuredHostname =
-    process.env.HOST ?? process.env.HOSTNAME ?? "127.0.0.1";
-  const hostname = formatHiveServerHostname(configuredHostname);
-  const protocol = process.env.HIVE_PROTOCOL ?? "http";
-
-  return `${protocol}://${hostname}:${port}`;
-}
 
 import { resolveCellsRoot } from "../workspaces/registry";
 
@@ -1028,25 +996,14 @@ export function createWorktreeManager(
   ): Promise<void> {
     const hiveUrl = resolveHiveServerUrl();
 
-    // Write .opencode/tools/hive.ts (the tool source)
-    const toolDir = join(worktreePath, ".opencode", "tools");
-    const toolPath = join(toolDir, "hive.ts");
-
     try {
-      await mkdir(toolDir, { recursive: true });
-      await writeFile(toolPath, HIVE_TOOL_SOURCE, "utf8");
+      await ensureHiveOpencodePlugin(worktreePath);
     } catch (error: unknown) {
-      logWarn("Failed to write Hive tool for worktree", error);
+      logWarn("Failed to write Hive OpenCode plugin for worktree", error);
     }
 
-    // Write .hive/config.json (tool configuration)
-    const hiveDir = join(worktreePath, ".hive");
-    const configPath = join(hiveDir, "config.json");
-    const configContent = generateHiveToolConfig({ cellId, hiveUrl });
-
     try {
-      await mkdir(hiveDir, { recursive: true });
-      await writeFile(configPath, configContent, "utf8");
+      await ensureHiveToolConfig(worktreePath, { cellId, hiveUrl });
     } catch (error: unknown) {
       logWarn("Failed to write Hive config for worktree", error);
     }

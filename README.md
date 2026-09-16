@@ -10,9 +10,15 @@ Monorepo project with React + TanStack Start frontend and Elysia backend.
 curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, exposes `hive` and `opencode2` through `~/.hive/bin`, and updates your shell PATH so the CLIs are immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
-During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
+Every Hive release includes the exact `opencode2` native binary supplied by `@opencode-ai/cli@0.0.0-beta-18866`. Installation configures Hive to use that package-managed binary without downloading a separate OpenCode CLI. The installed `opencode2` launcher disables auto-update so preview releases cannot silently switch data directories or become incompatible with Hive.
+
+In a source checkout, use the pinned workspace binary when you need the standalone TUI:
+
+```bash
+OPENCODE_DISABLE_AUTOUPDATE=1 ./node_modules/.bin/opencode2
+```
 
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
@@ -23,9 +29,7 @@ Environment variables:
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
-- `HIVE_SKIP_OPENCODE_INSTALL`: set to `1` to skip OpenCode auto-install.
-- `HIVE_OPENCODE_INSTALL_URL`: override the OpenCode installer URL.
-- `HIVE_OPENCODE_BIN`: pin the OpenCode executable path written to `hive.env`.
+- `HIVE_OPENCODE_BIN`: package-managed path to the bundled `opencode2` executable in installed releases.
 
 ### Using the installed binary
 
@@ -82,8 +86,10 @@ Environment variables:
   ```bash
   PORT=4100 hive
   ```
-- Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- Keep `opencode.json` in version control. Hive also generates per-worktree runtime artifacts under `.hive/` and `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` for embedded chat sessions; those machine-generated files should stay ignored in git. Hive still copies `.opencode/tools/` into spawned cells so OpenCode tools can propagate across nested cell spawns. Intentional OpenCode source under `.opencode/plugin/` remains trackable.
+- Hive and the Hive-installed `~/.hive/bin/opencode2` client share OpenCode's native user background service, configuration, credentials, and migrated session history. Independently installed preview versions may use a different data directory and are not compatible. Hive leaves its user service running during normal shutdown.
+- Embedded chat terminals attach to the shared session with isolated Hive-owned CLI keybinds and theme settings; they do not copy global or workspace CLI configuration.
+- The pinned OpenCode 2 service automatically migrates existing v1 sessions on first startup. Hive waits for migration completion before accepting agent work.
+- Keep `opencode.json` in version control. Hive generates per-worktree runtime artifacts under `.hive/`, `.opencode/state/`, and `.opencode/themes/`; those machine-generated files should stay ignored in git. Intentional OpenCode 2 source under `.opencode/plugins/` remains trackable, while Hive writes its cell integration to `.opencode/plugins/hive/index.js` in spawned cells.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
@@ -99,38 +105,16 @@ See [Android Runtime Walkthrough](docs/android-runtime-walkthrough.md) for the c
 
 #### OpenCode keybinds in Hive
 
-Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
+Hive writes an isolated, static browser-safe keybind configuration for embedded chat terminals (web + desktop runtimes):
 
-- Leader defaults to `Ctrl+X` unless overridden in OpenCode config.
-- `display_thinking`: `leader + i`
-- `variant_cycle`: `leader + t`
-- `theme_list`: `leader + j`
-- `command_list`: `leader + p`
-- `app_exit` (embedded chat terminals): `leader + q`
+- Leader: `Ctrl+X`
+- `session.toggle.thinking`: `leader + i`
+- `variant.cycle`: `leader + t`
+- `theme.switch`: `leader + j`
+- `command.palette.show`: `leader + p`
+- `app.exit` (embedded chat terminals): `leader + q`
 
-Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts by default to reduce accidental session exits while you are typing in the browser/Electron UI.
-
-Keybind merge behavior:
-
-- Hive starts with browser-safe aliases for conflict-prone actions.
-- Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
-- Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
-- Explicit keybind overrides that use `ctrl+c` and/or `ctrl+d` are honored in embedded chat terminals.
-- External `opencode attach` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
-
-Example:
-
-```json
-{
-  "keybinds": {
-    "variant_cycle": "ctrl+t"
-  }
-}
-```
-
-In Hive embedded terminals this resolves to `ctrl+t,<leader>t` so browser-safe fallback remains available.
-
-After changing keybind config, restart the chat terminal session (or restart Hive) to pick up updates.
+Embedded chat terminals intentionally ignore global, workspace, and inline CLI keybind settings. They also suppress `Ctrl+C` and `Ctrl+D` input so browser terminal keystrokes cannot accidentally exit the attached TUI. External `opencode2` sessions continue to use their own OpenCode CLI configuration and default exit combos.
 
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 
@@ -210,11 +194,14 @@ share a different Hive home.
 To launch the local web/server dev stack and Electron together, run:
 
 ```bash
-bun run dev:desktop:full
+bun run dev:desktop
 ```
 
-This waits for `http://localhost:3001` by default before opening Electron.
-Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
+This starts the renderer at port `3001` by default, selects the next available
+renderer port when needed, and passes the selected URL to Electron. It also
+waits for the workspace-local Hive API before opening the desktop window. Set
+`HIVE_DESKTOP_URL` to change the first renderer URL considered, or
+`HIVE_DESKTOP_BACKEND_URL` to use a different free loopback API port.
 
 ### Manual Setup
 
@@ -235,11 +222,14 @@ share a different Hive home.
 To launch the local web/server dev stack and Electron together, run:
 
 ```bash
-bun run dev:desktop:full
+bun run dev:desktop
 ```
 
-This waits for `http://localhost:3001` by default before opening Electron.
-Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
+This starts the renderer at port `3001` by default, selects the next available
+renderer port when needed, and passes the selected URL to Electron. It also
+waits for the workspace-local Hive API before opening the desktop window. Set
+`HIVE_DESKTOP_URL` to change the first renderer URL considered, or
+`HIVE_DESKTOP_BACKEND_URL` to use a different free loopback API port.
 
 **URLs:**
 - Web: [http://localhost:3001](http://localhost:3001)
@@ -381,6 +371,9 @@ True end-to-end browser testing runs with Playwright (Chromium only for now).
 # Run CI-parity true E2E flow with serialized workers
 bun run test:e2e
 
+# Provision the real default hive-dev template from a clean clone
+bun run test:e2e:hive-dev
+
 # Run faster local iteration with parallel workers
 bun run test:e2e:fast
 
@@ -440,10 +433,11 @@ Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
 - Use `bun run test:e2e:fast` while iterating locally; run the default `bun run test:e2e` before creating a PR that touches cell lifecycle, terminal handling, service orchestration, or workspace management.
+- Run `bun run test:e2e:hive-dev` when changing default templates, setup, configuration generation, or process readiness. It clones the current committed branch, provisions the real `hive-dev` template, probes both services, and verifies deletion cleanup.
 - `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
-- `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
+- `HIVE_E2E_WORKSPACE_MODE=clone` selects the dedicated clone-parity specs. It clones a source repo into the run sandbox (default source is this repo) and registers it as `hive`.
 - `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.
-- By default, the chat spec prefers lightweight templates (`E2E Template`, then `Basic Template`) to avoid heavy setup commands in test runs; set `HIVE_E2E_USE_DEFAULT_TEMPLATE=1` to keep each workspace's configured default template for strict parity debugging.
+- The standard suite uses lightweight fixture templates; it does not substitute for `test:e2e:hive-dev` when changing shipped provisioning behavior.
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
@@ -517,7 +511,8 @@ Notes:
 - CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-2vcpu-ubuntu-2404` for lint/check jobs and `blacksmith-4vcpu-ubuntu-2404` for E2E runtime).
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
-- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
+- `Hive Dev Provisioning Smoke` runs `bun run test:e2e:hive-dev` on pull requests; the E2E runtime job repeats it before the standard suite on merge queue, `main`, and manual dispatch.
+- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
 - `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
@@ -551,6 +546,7 @@ Notes:
 - `bun test`: Run unit tests in watch mode
 - `bun test:run`: Run unit tests once (CI mode)
 - `bun test:e2e`: Run Playwright true E2E suite (opt-in)
+- `bun test:e2e:hive-dev`: Provision the real default Hive development template from a clean clone
 - `bun test:e2e:headed`: Run Playwright in headed Chromium mode
 - `bun test:e2e:report`: Open the latest Playwright HTML report
 - `bun test:e2e:report:open`: Alias for opening the Playwright report

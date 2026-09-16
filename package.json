@@ -9,24 +9,27 @@
       "packages/*"
     ],
     "catalog": {
+      "@opencode-ai/cli": "0.0.0-beta-18866",
+      "@opencode-ai/client": "0.0.0-beta-18866",
+      "@opencode-ai/plugin": "0.0.0-beta-18866",
       "dotenv": "^17.2.2",
       "zod": "^4.1.11",
       "typescript": "^5.8.2",
-      "tsdown": "^0.15.5",
-      "@opencode-ai/sdk": "^1.4.3"
+      "tsdown": "^0.15.5"
     }
   },
   "scripts": {
-    "setup": "bun install && bun run ruler:apply && bun run setup:desktop-e2e && bun run config:generate && bun run tool:generate && bun run db:migrate",
+    "setup": "bun install && bun run ruler:apply && bun run setup:desktop-e2e && bun run config:generate && bun run db:migrate",
     "setup:desktop-e2e": "./scripts/dev/setup-desktop-e2e.sh",
     "check": "bun run check:commit",
-    "check:commit": "bun run check:agent-context && bun run check:config && bun run check:tool-source && bun run check:no-disabled-tests && bun run check:migrations && bun run check:staged && bun run check:secrets && bun run check:audit && bun run check:patches && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run check:dedupe && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
+    "check:commit": "bun run check:agent-context && bun run check:config && bun run check:no-disabled-tests && bun run check:migrations && bun run check:staged && bun run check:secrets && bun run check:audit && bun run check:patches && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run check:dedupe && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:distribution": "bun run scripts/distribution/check-distribution.ts",
     "check:push": "bun run check:commit",
     "test": "turbo test --ui=stream --force",
     "test:run": "bun run test:run:root && turbo test:run --ui=stream --force",
-    "test:run:root": "bun test ./scripts/dev/*.test.ts",
+    "test:run:root": "bun test ./scripts/dev/*.test.ts ./.opencode/plugins/ast-grep/*.test.ts",
     "test:e2e": "bun run --cwd apps/e2e test:e2e",
+    "test:e2e:hive-dev": "bun run --cwd apps/e2e test:e2e:hive-dev",
     "test:e2e:fast": "bun run --cwd apps/e2e test:e2e:fast",
     "test:e2e:tune": "bun run --cwd apps/e2e test:e2e:tune",
     "test:e2e:headed": "bun run --cwd apps/e2e test:e2e:headed",
@@ -47,8 +50,6 @@
     "ab:view": "bash scripts/agent-browser.sh view",
     "ab:view:video": "bash scripts/agent-browser.sh view-video",
     "check:config": "bun run config:generate && bunx biome check --write hive.config.json hive.config.schema.json && git diff --exit-code hive.config.json hive.config.schema.json",
-    "tool:generate": "bun scripts/dev/generate-hive-opencode-tool-source.ts",
-    "check:tool-source": "bun run tool:generate && git diff --exit-code apps/server/src/agents/hive-opencode-tool-source.generated.ts",
     "check:biome": "biome check --write .",
     "check:no-disabled-tests": "bun scripts/dev/check-no-disabled-tests.ts",
     "check:patches": "bun scripts/dev/check-stream-droid-patch.ts",
@@ -65,7 +66,7 @@
     "dev": "bun scripts/dev/with-local-hive-home.ts -- turbo run dev --filter=web... --filter=@hive/server...",
     "dev:turbo": "bun scripts/dev/with-local-hive-home.ts -- turbo run dev --filter=web... --filter=@hive/server...",
     "build": "turbo build",
-    "build:installer": "bun run check:patches && bun run tool:generate && bun run scripts/distribution/build.ts",
+    "build:installer": "bun run check:patches && bun run scripts/distribution/build.ts",
     "build:android-viewer": "bun run --cwd packages/android-runtime compile:viewer",
     "local:install": "bun run scripts/distribution/local-install.ts",
     "changeset": "changeset",
@@ -78,26 +79,27 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:server": "bun scripts/dev/with-local-hive-home.ts -- turbo -F @hive/server dev",
-    "dev:desktop": "bun scripts/dev/with-local-hive-home.ts -- bun run --cwd apps/desktop-electron start",
-    "dev:desktop:full": "bun scripts/dev/start-desktop-full.ts",
+    "dev:desktop": "bun scripts/dev/start-desktop-full.ts",
     "build:desktop": "bun run --cwd apps/desktop-electron package",
     "config:generate": "bun scripts/dev/generate-config.ts && bun scripts/dev/generate-config-schema.ts",
     "db:local": "cd apps/server && bun db:local",
     "db:push": "turbo -F @hive/server db:push",
     "db:studio": "turbo -F @hive/server db:studio",
     "db:generate": "turbo -F @hive/server db:generate",
-    "db:migrate": "turbo -F @hive/server db:migrate",
+    "db:migrate": "turbo -F @hive/server db:migrate --no-daemon --ui=stream",
     "prepare": "husky"
   },
   "dependencies": {
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@ast-grep/cli": "0.40.0",
     "@biomejs/biome": "2.3.0",
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
-    "@opencode-ai/plugin": "^1.4.3",
+    "@opencode-ai/cli": "catalog:",
+    "@opencode-ai/plugin": "catalog:",
     "@types/bun": "^1.2.6",
     "husky": "^9.1.7",
     "jscpd": "^4.0.9",
@@ -116,6 +118,10 @@
   "patchedDependencies": {
     "stream-droid@0.5.0": "patches/stream-droid@0.5.0.patch"
   },
+  "trustedDependencies": [
+    "@ast-grep/cli",
+    "@opencode-ai/cli"
+  ],
   "lint-staged": {
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"

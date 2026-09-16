@@ -28,7 +28,7 @@
               }
             ]
           },
-          "readyTimeoutMs": 3000
+          "readyTimeoutMs": 30000
         },
         "server": {
           "type": "process",
@@ -47,7 +47,7 @@
               }
             ]
           },
-          "readyTimeoutMs": 5000
+          "readyTimeoutMs": 30000
         }
       },
       "env": {
@@ -83,7 +83,7 @@
           "env": {
             "NODE_ENV": "development"
           },
-          "readyTimeoutMs": 5000
+          "readyTimeoutMs": 30000
         }
       },
       "includePatterns": ["./.env*", "./api/.env*"],
