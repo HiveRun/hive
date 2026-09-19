@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { finishRuntimeRun } from "../../../e2e/src/runtime/artifacts";
-import {
-  collectCleanupFailures,
-  throwRunAndCleanupErrors,
-} from "../../../e2e/src/runtime/errors";
+import { collectRuntimeCleanupFailures } from "../../../e2e/src/runtime/cleanup";
+import { throwRunAndCleanupErrors } from "../../../e2e/src/runtime/errors";
 import { createFixtureWorkspace } from "../../../e2e/src/runtime/fixture-workspace";
+import {
+  type MockLlmServer,
+  startMockLlmServer,
+} from "../../../e2e/src/runtime/mock-llm-server";
 import {
   parseSpecArg,
   resolveRuntimePaths,
@@ -15,13 +17,11 @@ import {
   createManagedProcessStopper,
   type ManagedProcess,
   runCommand,
-  stopManagedProcesses,
 } from "../../../e2e/src/runtime/process";
 import { createRuntimeContext } from "../../../e2e/src/runtime/runtime-context";
 import {
   cleanupRegisteredOpencodeServices,
   startDesktopE2eServer,
-  stopIsolatedOpencodeService,
 } from "../../../e2e/src/runtime/server";
 import { resolveOpencodeBinary } from "../../../server/src/agents/opencode-binary";
 
@@ -84,13 +84,18 @@ async function run() {
     runsDirectory: ["tmp", "e2e-desktop-runs"],
   });
   const managedProcesses: ManagedProcess[] = [];
+  let mockLlmServer: MockLlmServer | undefined;
   let runSucceeded = false;
 
   let runError: unknown;
   let cleanupError: unknown;
   try {
     await cleanupOrphanedOpencodeServices(context.runRoot);
-    await createDesktopFixtureWorkspace(context.workspaceRoot);
+    mockLlmServer = startMockLlmServer();
+    await createDesktopFixtureWorkspace(
+      context.workspaceRoot,
+      mockLlmServer.baseUrl
+    );
 
     const server = await startDesktopE2eServer({
       context,
@@ -144,13 +149,13 @@ async function run() {
     runError = error;
   } finally {
     const cleanupFailures: unknown[] = [];
-    await collectCleanupFailures(
-      [
-        () => stopManagedProcesses(managedProcesses, stopManagedProcess),
-        () => stopIsolatedOpencodeService(context),
-      ],
-      cleanupFailures
-    );
+    await collectRuntimeCleanupFailures({
+      context,
+      failures: cleanupFailures,
+      managedProcesses,
+      mockLlmServer,
+      stopProcess: stopManagedProcess,
+    });
 
     try {
       await finishRuntimeRun({
@@ -194,12 +199,14 @@ async function cleanupOrphanedOpencodeServices(
 }
 
 async function createDesktopFixtureWorkspace(
-  workspaceRoot: string
+  workspaceRoot: string,
+  llmBaseUrl: string
 ): Promise<void> {
   await createFixtureWorkspace({
     workspaceRoot,
     readmeTitle: "Hive Desktop E2E Workspace",
     commitMessage: "Initialize desktop E2E workspace",
+    llmBaseUrl,
   });
 }
 

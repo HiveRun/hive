@@ -1,7 +1,9 @@
 # Execution Discipline
 
 - Translate substantial requests into explicit acceptance criteria before implementation. Keep every criterion open until it has fresh evidence or a clearly reported blocker.
+- For a reported runtime failure, define the exact reproduction path as an acceptance criterion: the same top-level command, runtime mode, UI/API sequence, workspace or template, relevant persisted state, and externally visible result. Reproduce it before the fix when feasible and rerun that same path afterward; adjacent smoke tests, lower-level tests, or a different launcher do not satisfy this criterion.
 - Do not declare work complete because the code compiles, unit tests pass, or the happy path works. Verify the highest-risk shipped boundary affected by the change: compiled binary, installer, browser, Electron, process lifecycle, network, or device.
+- When behavior crosses process boundaries, inspect the live child boundary rather than only generated configuration or mocks. Verify the actual child environment, command, working directory, allocated/listening ports, logs, readiness, and cleanup whenever those values can affect the failure.
 - Before creating or updating a PR, inspect the CI workflow and run every merge-gating command affected by the diff. Jobs skipped on pull-request events are still mandatory local verification; if a required gate cannot run, report the exact blocker and do not describe the PR as ready or fully tested.
 - Never silently reduce scope to get a green result. Do not replace a packaged/runtime test with a dev server, mock the boundary under test, weaken assertions, remove coverage, skip cleanup, or substitute a partial workaround for the requested behavior.
 - Do not add retries, sleeps, broad catches, fallback paths, or compatibility layers merely to hide a failure. Use them only when the product requirement calls for them and the underlying failure mode is understood.
@@ -10,4 +12,5 @@
 - Prefer the smallest correct production fix, but do not confuse small with incomplete. A workaround is acceptable only when the user explicitly accepts the limitation and it is documented with a follow-up.
 - Request an independent code review after substantial or security-sensitive changes. Investigate concrete findings rather than dismissing them because the main test already passes.
 - Before the final response, run fresh verification for the completed source state, inspect the resulting artifacts, and confirm no owned processes, emulators, ports, or temporary resources leaked.
+- A broader E2E suite may supplement the exact reproduction but cannot replace it. If the exact user path cannot be exercised, report that limitation explicitly and do not claim the reported issue is fixed.
 - If credentials, hardware, destructive approval, or an ambiguous product decision truly blocks completion, stop and report the exact blocker, attempted diagnostics, current state, and next executable step. Never present blocked or partially verified work as done.

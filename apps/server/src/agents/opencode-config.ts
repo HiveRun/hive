@@ -18,6 +18,7 @@ type DefaultModel = {
 export type EffectiveOpencodeDefaults = {
   defaultModel?: DefaultModel;
   startMode?: "plan" | "build";
+  configuredProviderIds?: string[];
 };
 
 export type OpencodeModelPreferences = {
@@ -101,10 +102,18 @@ export async function loadEffectiveOpencodeDefaults(
     selectLatestConfigValue(entries, (config) => config.model);
   const defaultModel = parseModelConfig(model);
   const startMode = normalizeStartMode(defaultAgent);
+  const configuredProviderIds = Array.from(
+    new Set(
+      entries.flatMap((entry) =>
+        entry.type === "document" ? Object.keys(entry.info.providers ?? {}) : []
+      )
+    )
+  );
 
   return {
     ...(defaultModel ? { defaultModel } : {}),
     ...(startMode ? { startMode } : {}),
+    ...(configuredProviderIds.length ? { configuredProviderIds } : {}),
   };
 }
 

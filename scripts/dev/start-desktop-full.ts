@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  resolveDefaultDevCellsRoot,
   resolveDefaultDevHiveHome,
   resolveWorkspaceRoot,
 } from "./local-hive-home";
@@ -46,6 +47,11 @@ export async function resolveDesktopDevConfiguration(
 ): Promise<DesktopDevConfiguration> {
   const workspaceRoot = resolveWorkspaceRoot(currentDir);
   const hiveHome = sourceEnv.HIVE_HOME ?? resolveDefaultDevHiveHome(currentDir);
+  const cellsRoot =
+    sourceEnv.HIVE_CELLS_ROOT ??
+    (sourceEnv.HIVE_HOME
+      ? undefined
+      : resolveDefaultDevCellsRoot(currentDir, sourceEnv.XDG_STATE_HOME));
   const backend = normalizeLoopbackUrl(
     sourceEnv.HIVE_DESKTOP_BACKEND_URL ??
       sourceEnv.VITE_API_URL ??
@@ -91,6 +97,7 @@ export async function resolveDesktopDevConfiguration(
     desktopUrl,
     env: {
       ...sourceEnv,
+      ...(cellsRoot ? { HIVE_CELLS_ROOT: cellsRoot } : {}),
       HIVE_DESKTOP_BACKEND_URL: backendUrl,
       HIVE_DESKTOP_API_PORT: String(backendPort),
       HIVE_DESKTOP_DEV_HOST: desktop.hostname,

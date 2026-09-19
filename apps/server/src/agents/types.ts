@@ -45,6 +45,7 @@ export type AgentSessionRecord = {
   templateId: string;
   provider?: string;
   status: AgentSessionStatus;
+  errorMessage?: string | null;
   workspacePath: string;
   createdAt: string;
   updatedAt: string;

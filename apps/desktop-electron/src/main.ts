@@ -100,7 +100,7 @@ const installDesktopResponseGuard = (
   const readyToken = process.env.HIVE_DESKTOP_READY_TOKEN;
   const backendUrl = process.env.HIVE_DESKTOP_BACKEND_URL;
   if (!(readyToken && backendUrl && rendererUrl.startsWith("http:"))) {
-    return;
+    return false;
   }
 
   const protectedOrigins = resolveProtectedDesktopOrigins(
@@ -120,6 +120,7 @@ const installDesktopResponseGuard = (
       callback({ cancel });
     }
   );
+  return true;
 };
 
 const createMainWindow = async (
@@ -148,7 +149,10 @@ const createMainWindow = async (
   }
   const rendererUrl = desktopUrl ?? pathToFileURL(rendererEntry as string).href;
 
-  installDesktopResponseGuard(window, rendererUrl);
+  const guardsDesktopResponses = installDesktopResponseGuard(
+    window,
+    rendererUrl
+  );
   mediaPermissions.registerTrustedRenderer(window.webContents, rendererUrl);
   const guardNavigation = (
     event: { preventDefault: () => void },
@@ -179,6 +183,9 @@ const createMainWindow = async (
     ipcRegistry.detachWindow(window);
   });
 
+  if (guardsDesktopResponses) {
+    await window.webContents.session.clearCache();
+  }
   await window.loadURL(rendererUrl);
   return window;
 };

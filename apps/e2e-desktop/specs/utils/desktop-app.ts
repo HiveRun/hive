@@ -57,6 +57,9 @@ const createDesktopRuntimeEnv = (
     : {}),
   ...(options.daemonCwd ? { HIVE_DESKTOP_DAEMON_CWD: options.daemonCwd } : {}),
   ...(options.desktopUrl ? { HIVE_DESKTOP_URL: options.desktopUrl } : {}),
+  ...(options.readyToken
+    ? { HIVE_DESKTOP_READY_TOKEN: options.readyToken }
+    : {}),
   ...(options.preserveDaemonEnv
     ? { HIVE_DESKTOP_PRESERVE_DAEMON_ENV: "1" }
     : {}),
@@ -81,8 +84,10 @@ type LaunchDesktopAppOptions = {
   desktopUrl?: string;
   fakeMediaDevices?: boolean;
   preserveDaemonEnv?: boolean;
+  readyToken?: string;
   startupMode?: "starting" | "reconnecting";
   startupTimeoutMs?: number;
+  userDataDir?: string;
   useShellDetach?: boolean;
 };
 
@@ -104,6 +109,9 @@ export const launchDesktopApp = async (
   const app = await electron.launch({
     executablePath: electronPath as unknown as string,
     args: [
+      ...(options.userDataDir
+        ? [`--user-data-dir=${options.userDataDir}`]
+        : []),
       mainEntry,
       ...(options.fakeMediaDevices
         ? ["--use-fake-device-for-media-stream"]

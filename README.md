@@ -23,6 +23,7 @@ OPENCODE_DISABLE_AUTOUPDATE=1 ./node_modules/.bin/opencode2
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
+- `HIVE_CELLS_ROOT`: override the directory used for cell worktrees (defaults to `<HIVE_HOME>/cells`).
 - `HIVE_BIN_DIR`: override the bin directory that `hive` is linked into (defaults to `~/.hive/bin`).
 - `HIVE_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 - `HIVE_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
@@ -188,8 +189,11 @@ bun dev
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
-from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
-share a different Hive home.
+from your global `~/.hive` state. Their cell worktrees live outside the source
+checkout under `$XDG_STATE_HOME/hive/dev-cells/` (or
+`~/.local/state/hive/dev-cells/`) so repository-local OpenCode plugins are not
+discovered twice. Set `HIVE_HOME` or `HIVE_CELLS_ROOT` explicitly to override
+these defaults.
 
 To launch the local web/server dev stack and Electron together, run:
 
@@ -216,8 +220,11 @@ bun dev
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
-from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
-share a different Hive home.
+from your global `~/.hive` state. Their cell worktrees live outside the source
+checkout under `$XDG_STATE_HOME/hive/dev-cells/` (or
+`~/.local/state/hive/dev-cells/`) so repository-local OpenCode plugins are not
+discovered twice. Set `HIVE_HOME` or `HIVE_CELLS_ROOT` explicitly to override
+these defaults.
 
 To launch the local web/server dev stack and Electron together, run:
 

@@ -116,6 +116,21 @@ describe("createWorktreeManager include copy", () => {
     ).rejects.toThrow();
   });
 
+  it("removes legacy worktrees after the cells root changes", async () => {
+    const manager = createWorktreeManager(workspacePath);
+    const location = await manager.createWorktree("legacy-cell", {
+      force: true,
+    });
+    process.env.HIVE_CELLS_ROOT = join(tempRoot, "external-cells");
+
+    const movedRootManager = createWorktreeManager(workspacePath);
+    await movedRootManager.removeWorktree("legacy-cell");
+
+    await expect(
+      readTextFile(join(location.path, "README.md"), "utf8")
+    ).rejects.toThrow();
+  });
+
   it("creates the isolated cell branch from a selected source branch", async () => {
     const baseBranch = runGitRead(workspacePath, [
       "rev-parse",

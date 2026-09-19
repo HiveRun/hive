@@ -1161,6 +1161,7 @@ async function setupHivePlugin(context: Plugin.Context): Promise<void> {
       worktreePath,
       AbortSignal.timeout(HIVE_CONTEXT_TIMEOUT_MS)
     );
+    Reflect.deleteProperty(event.env, "HIVE_CELLS_ROOT");
     Object.assign(
       event.env,
       buildCellEnvironment(worktreePath, health.config, health.services),

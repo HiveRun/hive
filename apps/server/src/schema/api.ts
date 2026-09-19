@@ -333,6 +333,7 @@ const AgentSessionSchema = t.Object({
   templateId: t.String(),
   provider: t.Optional(t.String()),
   status: t.String(),
+  errorMessage: t.Optional(t.Union([t.String(), t.Null()])),
   workspacePath: t.String(),
   createdAt: t.String(),
   updatedAt: t.String(),

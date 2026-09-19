@@ -81,6 +81,7 @@ export default defineConfig(({ mode }) => {
     server: {
       headers: process.env.HIVE_DESKTOP_READY_TOKEN
         ? {
+            "Cache-Control": "no-store",
             "X-Hive-Desktop-Ready": process.env.HIVE_DESKTOP_READY_TOKEN,
           }
         : undefined,

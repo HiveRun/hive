@@ -10,8 +10,10 @@ import {
 } from "../../../../packages/android-runtime/e2e/browser-microphone";
 import { resolveOpencodeBinary } from "../../../server/src/agents/opencode-binary";
 import { finishRuntimeRun } from "./artifacts";
-import { collectCleanupFailures, throwRunAndCleanupErrors } from "./errors";
+import { collectRuntimeCleanupFailures } from "./cleanup";
+import { throwRunAndCleanupErrors } from "./errors";
 import { createFixtureWorkspace } from "./fixture-workspace";
+import { type MockLlmServer, startMockLlmServer } from "./mock-llm-server";
 import { parseSpecArg, resolveRuntimePaths } from "./paths";
 import { runPlaywrightSuite } from "./playwright";
 import {
@@ -20,14 +22,12 @@ import {
   runCommand,
   runCommandCapture,
   startManagedProcess,
-  stopManagedProcesses,
 } from "./process";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
 import {
   cleanupRegisteredOpencodeServices,
   startCompiledWebE2eServer,
   startWebE2eServer,
-  stopIsolatedOpencodeService,
 } from "./server";
 import { waitForHttpOk } from "./wait";
 
@@ -104,17 +104,18 @@ async function measurePhase<T>(phase: string, operation: () => Promise<T>) {
 async function finalizeRuntimeRun(
   context: RuntimeContext,
   managedProcesses: ManagedProcess[],
+  mockLlmServer: MockLlmServer | undefined,
   runSucceeded: boolean
 ): Promise<unknown> {
   const failures: unknown[] = [];
   await measurePhase("process cleanup", async () => {
-    await collectCleanupFailures(
-      [
-        () => stopManagedProcesses(managedProcesses, stopManagedProcess),
-        () => stopIsolatedOpencodeService(context),
-      ],
-      failures
-    );
+    await collectRuntimeCleanupFailures({
+      context,
+      failures,
+      managedProcesses,
+      mockLlmServer,
+      stopProcess: stopManagedProcess,
+    });
   });
 
   const finalizationSteps = [
@@ -170,12 +171,15 @@ async function run() {
     SECONDARY_WORKSPACE_NAME
   );
   const managedProcesses: ManagedProcess[] = [];
+  let mockLlmServer: MockLlmServer | undefined;
   let runSucceeded = false;
   let runError: unknown;
   let processCleanupError: unknown;
 
   try {
     await cleanupOrphanedOpencodeServices(context.runRoot);
+    const activeMockLlmServer = startMockLlmServer();
+    mockLlmServer = activeMockLlmServer;
 
     if (useSharedHiveHome) {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
@@ -191,10 +195,22 @@ async function run() {
           sourceRoot: workspaceSource,
           workspaceRoot: context.workspaceRoot,
         });
-        await createWebFixtureWorkspace(secondaryWorkspaceRoot, false);
+        await createWebFixtureWorkspace(
+          secondaryWorkspaceRoot,
+          activeMockLlmServer.baseUrl,
+          false
+        );
       } else {
-        await createWebFixtureWorkspace(context.workspaceRoot, ANDROID_E2E);
-        await createWebFixtureWorkspace(secondaryWorkspaceRoot, false);
+        await createWebFixtureWorkspace(
+          context.workspaceRoot,
+          activeMockLlmServer.baseUrl,
+          ANDROID_E2E
+        );
+        await createWebFixtureWorkspace(
+          secondaryWorkspaceRoot,
+          activeMockLlmServer.baseUrl,
+          false
+        );
       }
     });
 
@@ -299,6 +315,7 @@ async function run() {
     processCleanupError = await finalizeRuntimeRun(
       context,
       managedProcesses,
+      mockLlmServer,
       runSucceeded
     );
   }
@@ -489,12 +506,14 @@ function validateEncodedSpeechChannel(options: {
 
 async function createWebFixtureWorkspace(
   workspaceRoot: string,
+  llmBaseUrl: string,
   includeAndroidTemplate = false
 ): Promise<void> {
   await createFixtureWorkspace({
     workspaceRoot,
     readmeTitle: "Hive E2E Workspace",
     commitMessage: "Initialize E2E workspace",
+    llmBaseUrl,
     includeAndroidTemplate,
     includeServicesTemplate: true,
     includeSetupRetryTemplate: true,

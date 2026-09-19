@@ -42,6 +42,7 @@ describe("default Hive configuration", () => {
         "HIVE_DESKTOP_DEV_PORT",
         "HIVE_DESKTOP_RENDERER_READY_FILE",
         "HIVE_DESKTOP_READY_TOKEN",
+        "HIVE_CELLS_ROOT",
         "HIVE_HOME",
         "HIVE_READY_FILE",
         "HIVE_WORKSPACE_ROOT",

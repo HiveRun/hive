@@ -1,5 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ElectronApplication, expect, test } from "@playwright/test";
+import { throwRunAndCleanupErrors } from "../../e2e/src/runtime/errors";
 import { findAvailablePort } from "../../e2e/src/runtime/wait";
 import {
   launchDesktopApp,
@@ -9,6 +13,11 @@ import {
 
 const ROOT_CONTENT_TIMEOUT_MS = 30_000;
 const FAKE_BACKEND_START_DELAY_MS = 1500;
+const HTTP_OK_STATUS = 200;
+const HTTP_NOT_MODIFIED_STATUS = 304;
+const CACHE_GUARD_ETAG = '"desktop-cache-guard"';
+const CACHE_GUARD_HTML =
+  "<!doctype html><html><body><main>Desktop cache guard ready</main></body></html>";
 
 const createDelayedHealthServerScript = (port: number) => `
 setTimeout(() => {
@@ -84,6 +93,92 @@ test("desktop launch smoke loads workspace shell", async () => {
   } finally {
     await app.close();
   }
+});
+
+test("desktop launch rejects stale cache without blocking the current renderer", async () => {
+  const port = await findAvailablePort();
+  const desktopUrl = `http://127.0.0.1:${port}`;
+  const userDataDir = await mkdtemp(join(tmpdir(), "hive-desktop-cache-"));
+  let readyToken = "first-launch-token";
+  const renderer = createServer((request, response) => {
+    if (request.headers["if-none-match"] === CACHE_GUARD_ETAG) {
+      response.writeHead(HTTP_NOT_MODIFIED_STATUS, {
+        "Cache-Control": "no-cache",
+        ETag: CACHE_GUARD_ETAG,
+      });
+      response.end();
+      return;
+    }
+
+    response.writeHead(HTTP_OK_STATUS, {
+      "Cache-Control": "no-cache",
+      "Content-Type": "text/html",
+      ETag: CACHE_GUARD_ETAG,
+      "X-Hive-Desktop-Ready": readyToken,
+    });
+    response.end(CACHE_GUARD_HTML);
+  });
+
+  let runError: unknown;
+  let cleanupError: unknown;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      renderer.once("error", reject);
+      renderer.listen(port, "127.0.0.1", resolve);
+    });
+
+    const firstLaunch = await launchDesktopApp({
+      desktopUrl,
+      readyToken,
+      userDataDir,
+    });
+    try {
+      await expect(
+        firstLaunch.page.getByText("Desktop cache guard ready")
+      ).toBeVisible();
+    } finally {
+      await firstLaunch.app.close();
+    }
+
+    readyToken = "second-launch-token";
+    const secondLaunch = await launchDesktopApp({
+      desktopUrl,
+      readyToken,
+      userDataDir,
+    });
+    try {
+      await expect(
+        secondLaunch.page.getByText("Desktop cache guard ready")
+      ).toBeVisible();
+    } finally {
+      await secondLaunch.app.close();
+    }
+  } catch (error) {
+    runError = error;
+  } finally {
+    const cleanupOutcomes = await Promise.allSettled([
+      renderer.listening
+        ? new Promise<void>((resolve, reject) => {
+            renderer.close((error) => (error ? reject(error) : resolve()));
+          })
+        : Promise.resolve(),
+      rm(userDataDir, { force: true, recursive: true }),
+    ]);
+    const cleanupFailures = cleanupOutcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : []
+    );
+    if (cleanupFailures.length > 0) {
+      cleanupError = new AggregateError(
+        cleanupFailures,
+        "Desktop cache regression cleanup failed"
+      );
+    }
+  }
+  throwRunAndCleanupErrors(
+    runError,
+    cleanupError,
+    "Desktop cache regression and cleanup failed"
+  );
 });
 
 test("packaged desktop launch opens a renderer window", async () => {

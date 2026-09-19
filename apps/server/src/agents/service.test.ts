@@ -41,7 +41,9 @@ const INVALID_MODEL_ID = "gpt-5.2-xhigh";
 const FALLBACK_MODEL_ID = "minimax-m2.1";
 const RUNTIME_SESSION_ID = "session-runtime";
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
+const PROVIDER_CATALOG_READY_TIMEOUT_MS = 15_000;
 const EXPECTED_RECONNECT_CLIENT_ACQUISITIONS = 3;
+const EXPECTED_PARTIAL_CATALOG_CALLS = 3;
 
 type ClientStub = OpenCodeV2ClientFixture;
 
@@ -207,6 +209,50 @@ describe("agent model selection", () => {
     });
   }
 
+  function configureEffectiveModel(
+    providerId: string,
+    modelId: string,
+    includeDefaultModel = true
+  ) {
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
+      ...(includeDefaultModel ? { defaultModel: { providerId, modelId } } : {}),
+      configuredProviderIds: [providerId],
+    });
+  }
+
+  function createConfiguredCatalog(providerId: string, modelId: string) {
+    return createProviderCatalog(providerId, { [modelId]: modelId }, modelId);
+  }
+
+  function mockCreatedSessionModel(providerId: string, modelId: string) {
+    clientStub.session.create.mockResolvedValueOnce({
+      ...createMockSession(),
+      model: createModel(providerId, modelId),
+    });
+  }
+
+  async function ensureConfiguredModelAfterCatalogs(
+    providerId: string,
+    modelId: string,
+    ...catalogs: [V2ProviderCatalogFixture, ...V2ProviderCatalogFixture[]]
+  ) {
+    configureEffectiveModel(providerId, modelId);
+    mockProviderCatalogSequence(clientStub, ...catalogs);
+    mockCreatedSessionModel(providerId, modelId);
+    return await ensureAgentSession(cellId);
+  }
+
+  function createConfiguredCatalogFixtures() {
+    const providerId = "fixture-provider";
+    const modelId = "fixture-model";
+    return {
+      configuredCatalog: createConfiguredCatalog(providerId, modelId),
+      initialCatalog: createFallbackProviderCatalog(),
+      modelId,
+      providerId,
+    };
+  }
+
   async function startPlanAfterQuestionAnswer(targetCellId: string) {
     useEventsClient([v2Events.formReplied()]);
     await ensureAgentSession(targetCellId, { startMode: "plan" });
@@ -245,6 +291,54 @@ describe("agent model selection", () => {
       sessionID: session.id,
       text: "Run task with new model",
     });
+  });
+
+  it("waits for the generated Hive plugin before sending a prompt", async () => {
+    clientStub.spies.listPlugins.mockResolvedValueOnce({
+      location: clientStub.location,
+      data: [],
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(clientStub.plugin.list).toHaveBeenCalledTimes(2);
+    await sendAgentMessage(session.id, "Wait for plugin reload");
+    expect(clientStub.session.prompt).toHaveBeenCalledWith({
+      sessionID: session.id,
+      text: "Wait for plugin reload",
+    });
+  });
+
+  it("persists plugin load failures on the agent session", async () => {
+    clientStub.session.create.mockResolvedValueOnce({
+      ...createMockSession(),
+      outcome: "succeeded",
+    });
+    const session = await ensureAgentSession(cellId);
+    clientStub.spies.listPlugins.mockResolvedValue({
+      location: clientStub.location,
+      data: [
+        {
+          id: "hive.cell.v2.r1.tools-context-shell-permission",
+          source: {
+            type: "local",
+            path: `${TEST_WORKSPACE_PATH}/.opencode/plugins/hive/index.js`,
+          },
+          features: {},
+          state: { status: "failed", error: "plugin failed to load" },
+        },
+      ],
+    });
+    await expect(
+      sendAgentMessage(session.id, "Do not send this prompt")
+    ).rejects.toThrow("plugin failed to load");
+
+    const failed = await fetchAgentSession(session.id);
+    expect(failed).toMatchObject({
+      status: "error",
+      errorMessage: expect.stringContaining("plugin failed to load"),
+    });
+    expect(clientStub.session.prompt).not.toHaveBeenCalled();
   });
 
   it("reconnects a runtime after its shared event stream closes", async () => {
@@ -526,6 +620,94 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId);
 
     expectSessionModel(session, TEST_PROVIDER_ID, TEMPLATE_MODEL_ID);
+  });
+
+  it("waits for the configured default model to enter the provider catalog", async () => {
+    const { configuredCatalog, initialCatalog, modelId, providerId } =
+      createConfiguredCatalogFixtures();
+    const session = await ensureConfiguredModelAfterCatalogs(
+      providerId,
+      modelId,
+      initialCatalog,
+      configuredCatalog
+    );
+
+    expectSessionModel(session, providerId, modelId);
+    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits until both the configured model and provider enter the catalog", async () => {
+    const { configuredCatalog, initialCatalog, modelId, providerId } =
+      createConfiguredCatalogFixtures();
+    const modelOnlyCatalog = {
+      ...configuredCatalog,
+      default: initialCatalog.default,
+      providers: initialCatalog.providers,
+    };
+    const session = await ensureConfiguredModelAfterCatalogs(
+      providerId,
+      modelId,
+      initialCatalog,
+      modelOnlyCatalog,
+      configuredCatalog
+    );
+
+    expectSessionModel(session, providerId, modelId);
+    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(
+      EXPECTED_PARTIAL_CATALOG_CALLS
+    );
+  });
+
+  it("waits for a persisted configured model override to enter the catalog", async () => {
+    const configuredProviderId = "persisted-provider";
+    const configuredModelId = "persisted-model";
+    const initialCatalog = createFallbackProviderCatalog();
+    const configuredCatalog = createConfiguredCatalog(
+      configuredProviderId,
+      configuredModelId
+    );
+    configureEffectiveModel(configuredProviderId, configuredModelId, false);
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: configuredModelId,
+      providerIdOverride: configuredProviderId,
+    });
+    mockProviderCatalogSequence(clientStub, initialCatalog, configuredCatalog);
+
+    const session = await ensureAgentSession(cellId);
+
+    expectSessionModel(session, configuredProviderId, configuredModelId);
+    expect(clientStub.session.create).toHaveBeenCalledWith({
+      title: "Model Test Cell",
+      agent: "plan",
+      model: createModel(configuredProviderId, configuredModelId),
+      location: { directory: TEST_WORKSPACE_PATH },
+    });
+  });
+
+  it("does not wait for lower-priority configured defaults when an explicit model is valid", async () => {
+    configureEffectiveModel("unavailable-provider", "unavailable-model");
+    mockProviderCatalog(clientStub, createCodexProviderCatalog());
+
+    const session = await ensureCodexBuildSession();
+
+    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
+    expect(clientStub.spies.listProviders).toHaveBeenCalledOnce();
+  });
+
+  it("fails after the configured model catalog readiness timeout", async () => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(PROVIDER_CATALOG_READY_TIMEOUT_MS);
+    configureEffectiveModel("unavailable-provider", "unavailable-model");
+    mockProviderCatalog(clientStub, createFallbackProviderCatalog());
+
+    await expect(ensureAgentSession(cellId)).rejects.toThrow(
+      'Configured OpenCode model "unavailable-provider/unavailable-model" did not enter the provider catalog after 15000ms'
+    );
+    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(2);
+    expect(clientStub.session.create).not.toHaveBeenCalled();
   });
 
   it("accepts explicit model override when it matches provider model id", async () => {
@@ -1174,6 +1356,42 @@ function mockProviderCatalog(
   catalog: V2ProviderCatalogFixture
 ): void {
   applyV2ProviderCatalogFixture(client, catalog);
+}
+
+function mockProviderCatalogSequence(
+  client: ClientStub,
+  ...catalogs: [V2ProviderCatalogFixture, ...V2ProviderCatalogFixture[]]
+): void {
+  const settled = catalogs.at(-1);
+  if (!settled) {
+    throw new Error("Expected at least one provider catalog fixture");
+  }
+  for (const catalog of catalogs.slice(0, -1)) {
+    client.spies.listProviders.mockResolvedValueOnce({
+      location: client.location,
+      data: catalog.providers,
+    });
+    client.spies.listModels.mockResolvedValueOnce({
+      location: client.location,
+      data: catalog.models,
+    });
+    client.spies.getDefaultModel.mockResolvedValueOnce({
+      location: client.location,
+      data: catalog.default,
+    });
+  }
+  client.spies.listProviders.mockResolvedValue({
+    location: client.location,
+    data: settled.providers,
+  });
+  client.spies.listModels.mockResolvedValue({
+    location: client.location,
+    data: settled.models,
+  });
+  client.spies.getDefaultModel.mockResolvedValue({
+    location: client.location,
+    data: settled.default,
+  });
 }
 
 function createHiveConfigWithTemplateAgent(

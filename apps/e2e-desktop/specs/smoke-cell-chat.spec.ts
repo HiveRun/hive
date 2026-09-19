@@ -1,11 +1,16 @@
 import { type Locator, type Page, test } from "@playwright/test";
 import {
+  E2E_MODEL_ID,
+  E2E_PROVIDER_ID,
+} from "../../e2e/src/runtime/fixture-workspace";
+import {
   fetchAgentMessageIds,
   fetchAgentMessages,
   fetchAgentSession,
   type AgentSession as SessionSnapshot,
   sendChatTerminalInput,
   wait,
+  waitForAgentMessage,
   waitForAgentSession,
   waitForCondition,
 } from "../../e2e/src/test-helpers";
@@ -20,6 +25,7 @@ import {
 } from "./utils/desktop-test-helpers";
 
 const SESSION_TIMEOUT_MS = 120_000;
+const INITIAL_RESPONSE_TIMEOUT_MS = 240_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 240_000;
@@ -37,6 +43,7 @@ const TERMINAL_MISSING_RELOAD_THRESHOLD = 20;
 const MAX_TERMINAL_PAGE_RELOADS = 2;
 const TERMINAL_PAGE_RELOAD_WAIT_MS = 1500;
 const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
+const DESKTOP_CHAT_TEST_TIMEOUT_MS = 600_000;
 
 const TERMINAL_CONNECTION_BADGE_SELECTOR =
   "[data-testid='terminal-connection']";
@@ -58,14 +65,17 @@ type PromptAcceptanceOptions = {
 };
 
 test("desktop cell chat smoke creates a cell and accepts a prompt", async () => {
+  test.setTimeout(DESKTOP_CHAT_TEST_TIMEOUT_MS);
   const apiUrl = resolveDesktopApiUrl(
     "HIVE_E2E_API_URL is required for desktop smoke tests"
   );
   const { app, page } = await launchDesktopApp();
 
   try {
+    const initialResponseToken = `HIVE_DESKTOP_AUTOSTART_${Date.now()}`;
     const cellId = await createDesktopCell({
       apiUrl,
+      description: `Reply with exactly ${initialResponseToken} and do not modify files.`,
       name: `Desktop E2E Cell ${Date.now()}`,
     });
 
@@ -89,6 +99,11 @@ test("desktop cell chat smoke creates a cell and accepts a prompt", async () => 
       context: "before prompt send",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
+    await waitForInitialAssistantResponse({
+      apiUrl,
+      cellId,
+      token: initialResponseToken,
+    });
 
     const prompt = `Desktop chat token ${Date.now()}`;
     await sendPromptWithRetries({
@@ -109,6 +124,40 @@ test("desktop cell chat smoke creates a cell and accepts a prompt", async () => 
     await app.close();
   }
 });
+
+async function waitForInitialAssistantResponse(options: {
+  apiUrl: string;
+  cellId: string;
+  token: string;
+}) {
+  const initialSession = await waitForAgentSession({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+    timeoutMs: SESSION_TIMEOUT_MS,
+  });
+  const providerId =
+    initialSession.modelProviderId ?? initialSession.provider ?? "none";
+  if (
+    initialSession.modelId !== E2E_MODEL_ID ||
+    providerId !== E2E_PROVIDER_ID
+  ) {
+    throw new Error(
+      `Desktop agent model mismatch. expected=${E2E_PROVIDER_ID}/${E2E_MODEL_ID} observed=${providerId}/${initialSession.modelId ?? "none"}`
+    );
+  }
+
+  await waitForAgentMessage({
+    apiUrl: options.apiUrl,
+    baselineMessageIds: new Set(),
+    cellId: options.cellId,
+    content: options.token,
+    errorMessage: `Initial desktop prompt did not produce assistant response ${options.token}`,
+    intervalMs: POLL_INTERVAL_MS,
+    role: "assistant",
+    sessionId: initialSession.id,
+    timeoutMs: INITIAL_RESPONSE_TIMEOUT_MS,
+  });
+}
 
 async function sendPromptWithRetries(options: {
   page: Page;

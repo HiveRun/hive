@@ -57,6 +57,24 @@ describe("loadEffectiveOpencodeDefaults", () => {
     });
   });
 
+  it("reports providers declared by layered configuration", async () => {
+    const defaults = await loadDefaults([
+      document({ providers: { "hive-e2e": { models: {} } } }),
+      document({
+        model: "hive-e2e/hive-e2e",
+        providers: { secondary: { models: {} } },
+      }),
+    ]);
+
+    expect(defaults).toEqual({
+      defaultModel: {
+        providerId: "hive-e2e",
+        modelId: "hive-e2e",
+      },
+      configuredProviderIds: ["hive-e2e", "secondary"],
+    });
+  });
+
   it("returns an empty object when OpenCode exposes no model or start mode", async () => {
     const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
       client: makeOpencodeClient([]),

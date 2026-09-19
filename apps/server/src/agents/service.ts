@@ -42,6 +42,10 @@ import type {
 const runtimeRegistry = new Map<string, RuntimeHandle>();
 const cellSessionMap = new Map<string, string>();
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
+const HIVE_PLUGIN_READY_POLL_INTERVAL_MS = 100;
+const HIVE_PLUGIN_READY_TIMEOUT_MS = 15_000;
+const PROVIDER_CATALOG_READY_POLL_INTERVAL_MS = 100;
+const PROVIDER_CATALOG_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 const HIVE_INSTRUCTIONS_RELATIVE_PATH = ".hive/instructions.md";
@@ -330,6 +334,7 @@ type RuntimeHandle = {
   client: OpenCodeClient;
   abortController: AbortController;
   status: AgentSessionStatus;
+  errorMessage: string | null;
   pendingInterrupt: boolean;
   preserveResumeOnInterrupt: boolean;
   startMode: AgentMode;
@@ -1368,7 +1373,7 @@ async function recoverPersistedCell(
   }
 
   if (shouldResumeRuntime(runtime)) {
-    await assertHivePluginReady(runtime.client, runtime.cell.workspacePath);
+    await waitForHivePluginReady(runtime.client, runtime.cell.workspacePath);
     await runtime.client.session.prompt({
       sessionID: runtime.session.id,
       text: "",
@@ -1386,25 +1391,34 @@ async function recoverPersistedCell(
   runtime.cell.resumeAgentSessionOnStartup = false;
 }
 
-async function assertHivePluginReady(
+async function waitForHivePluginReady(
   client: OpenCodeClient,
   directory: string
 ): Promise<void> {
-  const plugins = await client.plugin.list({
-    location: { directory },
-  });
-  const plugin = plugins.data.find(
-    (candidate) => candidate.id === HIVE_PLUGIN_ID
-  );
-  if (!plugin) {
-    throw new Error(
-      `Required OpenCode plugin ${HIVE_PLUGIN_ID} is not registered for ${directory}`
+  const deadline = Date.now() + HIVE_PLUGIN_READY_TIMEOUT_MS;
+
+  while (true) {
+    const plugins = await client.plugin.list({
+      location: { directory },
+    });
+    const plugin = plugins.data.find(
+      (candidate) => candidate.id === HIVE_PLUGIN_ID
     );
-  }
-  if (plugin.state.status === "failed") {
-    throw new Error(
-      `Required OpenCode plugin ${HIVE_PLUGIN_ID} failed: ${plugin.state.error}`
-    );
+    if (plugin?.state.status === "active") {
+      return;
+    }
+    if (plugin?.state.status === "failed") {
+      throw new Error(
+        `Required OpenCode plugin ${HIVE_PLUGIN_ID} failed: ${plugin.state.error}`
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Required OpenCode plugin ${HIVE_PLUGIN_ID} is not registered for ${directory} after ${HIVE_PLUGIN_READY_TIMEOUT_MS}ms`
+      );
+    }
+
+    await delay(HIVE_PLUGIN_READY_POLL_INTERVAL_MS);
   }
 }
 
@@ -1593,9 +1607,6 @@ async function ensureRuntimeForCellUnlocked(
     effectiveOpencodeDefaults,
   });
 
-  const providerCatalog =
-    await fetchProviderCatalogForWorkspace(workspaceRootPath);
-
   const provisioningOptions = await loadProvisioningAgentOptions({
     runtimeDb: deps.db,
     cellId,
@@ -1606,6 +1617,20 @@ async function ensureRuntimeForCellUnlocked(
     options,
     persistedModelSelection: provisioningOptions.modelSelection,
     deps,
+  });
+
+  const providerCatalog = await waitForConfiguredCatalogModel({
+    workspaceRootPath,
+    candidates: [
+      selectionOptions,
+      agentConfig,
+      defaultOpencodeModel,
+      {
+        providerId: configDefaultProvider,
+        modelId: configDefaultModel,
+      },
+    ],
+    configuredProviderIds: effectiveOpencodeDefaults.configuredProviderIds,
   });
 
   const startMode =
@@ -1646,6 +1671,7 @@ async function ensureRuntimeForCellUnlocked(
     force: options?.force ?? false,
     deps,
   });
+  await waitForHivePluginReady(runtime.client, cell.workspacePath);
 
   let restoredModel: Awaited<ReturnType<typeof resolveSessionModelPreference>> =
     null;
@@ -1742,6 +1768,70 @@ export async function fetchProviderCatalogForWorkspace(
   }
 }
 
+async function waitForConfiguredCatalogModel(args: {
+  workspaceRootPath: string;
+  candidates: Array<ModelSelectionCandidate | undefined>;
+  configuredProviderIds: string[] | undefined;
+}): Promise<ProviderCatalog> {
+  let catalog = await fetchProviderCatalogForWorkspace(args.workspaceRootPath);
+  let requestedModel:
+    | { providerId: string; modelId: string; variant?: string }
+    | undefined;
+  for (const candidate of args.candidates) {
+    if (!(candidate?.providerId && candidate.modelId)) {
+      continue;
+    }
+    if (
+      findProviderById(catalog.providers, candidate.providerId) &&
+      findModel(catalog.models, candidate.providerId, candidate.modelId)
+    ) {
+      return catalog;
+    }
+    if (args.configuredProviderIds?.includes(candidate.providerId)) {
+      requestedModel = {
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        variant: candidate.variant,
+      };
+      break;
+    }
+  }
+  if (!requestedModel) {
+    return catalog;
+  }
+  const catalogCandidate = {
+    providerId: requestedModel.providerId,
+    modelId: requestedModel.modelId,
+  };
+
+  const deadline = Date.now() + PROVIDER_CATALOG_READY_TIMEOUT_MS;
+  while (
+    !resolveCandidateModel({
+      candidate: catalogCandidate,
+      providers: catalog.providers,
+      models: catalog.models,
+    }) &&
+    Date.now() < deadline
+  ) {
+    await delay(PROVIDER_CATALOG_READY_POLL_INTERVAL_MS);
+    catalog = await fetchProviderCatalogForWorkspace(args.workspaceRootPath);
+  }
+
+  if (
+    !resolveCandidateModel({
+      candidate: catalogCandidate,
+      providers: catalog.providers,
+      models: catalog.models,
+    })
+  ) {
+    throw new Error(
+      `Configured OpenCode model "${catalogCandidate.providerId}/${catalogCandidate.modelId}" did not enter the provider catalog after ${PROVIDER_CATALOG_READY_TIMEOUT_MS}ms`
+    );
+  }
+
+  return catalog;
+}
+
 type StartRuntimeArgs = {
   cell: Cell;
   providerId?: string;
@@ -1800,6 +1890,7 @@ async function startOpencodeRuntime({
     client,
     abortController,
     status: "awaiting_input",
+    errorMessage: null,
     pendingInterrupt: false,
     preserveResumeOnInterrupt: false,
     startMode,
@@ -1807,10 +1898,13 @@ async function startOpencodeRuntime({
     modeUpdatedAt: new Date().toISOString(),
     async sendMessage(input) {
       runtime.pendingInterrupt = false;
-      await assertHivePluginReady(runtime.client, runtime.cell.workspacePath);
-      await applyRuntimeStatus(runtime, "working");
 
       try {
+        await waitForHivePluginReady(
+          runtime.client,
+          runtime.cell.workspacePath
+        );
+        await applyRuntimeStatus(runtime, "working");
         await runtime.client.session.prompt({
           sessionID: session.id,
           ...toOpencodePrompt(input),
@@ -2135,8 +2229,16 @@ async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
     return;
   }
 
+  if (runtime.status === "error") {
+    return;
+  }
+
   if (runtime.session.outcome === "failed") {
-    await applyRuntimeStatus(runtime, "error");
+    await applyRuntimeStatus(
+      runtime,
+      "error",
+      runtime.errorMessage ?? undefined
+    );
     return;
   }
   if (
@@ -2495,6 +2597,7 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     templateId: runtime.cell.templateId,
     provider: runtime.providerId,
     status: runtime.status,
+    errorMessage: runtime.errorMessage,
     workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
@@ -2511,6 +2614,7 @@ function setRuntimeStatus(
   error?: string
 ) {
   runtime.status = status;
+  runtime.errorMessage = error ?? null;
   const statusEvent =
     error === undefined
       ? { type: "status" as const, status }

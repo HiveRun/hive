@@ -93,6 +93,7 @@ describe("cell environment directories", () => {
   it("does not leak parent desktop launch state into cell processes", () => {
     const environment = buildCellProcessEnvironment(
       {
+        HIVE_CELLS_ROOT: "/parent/cells",
         HIVE_DESKTOP_API_PORT: "3000",
         HIVE_DESKTOP_READY_TOKEN: "parent-token",
         HIVE_READY_FILE: "/parent/ready",
@@ -124,6 +125,7 @@ describe("cell environment directories", () => {
         cellEnvironment: { WEB_PORT: "43767" },
         command: "bun run dev",
         inheritedEnvironment: {
+          HIVE_CELLS_ROOT: "/parent/cells",
           HIVE_DESKTOP_API_PORT: "3000",
           HIVE_READY_FILE: "/parent/ready",
           PATH: "/usr/bin",
@@ -133,6 +135,8 @@ describe("cell environment directories", () => {
       })
     ).toEqual({
       args: [
+        "-u",
+        "HIVE_CELLS_ROOT",
         "-u",
         "HIVE_DESKTOP_API_PORT",
         "-u",
@@ -147,6 +151,7 @@ describe("cell environment directories", () => {
 
   it("overrides inherited launch state with empty values on Windows", () => {
     const inheritedEnvironment = {
+      HIVE_CELLS_ROOT: "C:\\parent\\cells",
       HIVE_DESKTOP_API_PORT: "3000",
       HIVE_READY_FILE: "C:\\parent\\ready",
       PATH: "C:\\Windows",
@@ -161,6 +166,7 @@ describe("cell environment directories", () => {
         "win32"
       )
     ).toEqual({
+      HIVE_CELLS_ROOT: "",
       HIVE_DESKTOP_API_PORT: "",
       HIVE_READY_FILE: "",
       PATH: "C:\\Windows",

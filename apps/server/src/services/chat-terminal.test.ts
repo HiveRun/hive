@@ -17,6 +17,7 @@ vi.mock("bun-pty", () => ({ spawn: spawnMock }));
 import { chatTerminalService } from "./chat-terminal";
 
 const environmentNames = [
+  "HIVE_CELLS_ROOT",
   "HIVE_HOME",
   "HIVE_OPENCODE_BIN",
   "HIVE_OPENCODE_SERVER_URL",
@@ -138,6 +139,7 @@ describe("OpenCode 2 chat terminal", () => {
       theme: "external-theme",
       default_agent: "build",
     });
+    process.env.HIVE_CELLS_ROOT = "/parent/cells";
     chatTerminalService.ensureSession(createEnsureArgs(workspacePath));
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
@@ -176,6 +178,7 @@ describe("OpenCode 2 chat terminal", () => {
     });
     expect(options.env).not.toHaveProperty("OPENCODE_CONFIG_CONTENT");
     expect(options.env).not.toHaveProperty("OPENCODE_CONFIG_DIR");
+    expect(options.env).not.toHaveProperty("HIVE_CELLS_ROOT");
   });
 
   it("uses authenticated --server for an explicit server URL", () => {

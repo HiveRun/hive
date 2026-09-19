@@ -28,6 +28,7 @@ OPENCODE_DISABLE_AUTOUPDATE=1 ./node_modules/.bin/opencode2
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
+- `HIVE_CELLS_ROOT`: override the directory used for cell worktrees (defaults to `<HIVE_HOME>/cells`).
 - `HIVE_BIN_DIR`: override the bin directory that `hive` is linked into (defaults to `~/.hive/bin`).
 - `HIVE_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 - `HIVE_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
@@ -193,8 +194,11 @@ bun dev
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
-from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
-share a different Hive home.
+from your global `~/.hive` state. Their cell worktrees live outside the source
+checkout under `$XDG_STATE_HOME/hive/dev-cells/` (or
+`~/.local/state/hive/dev-cells/`) so repository-local OpenCode plugins are not
+discovered twice. Set `HIVE_HOME` or `HIVE_CELLS_ROOT` explicitly to override
+these defaults.
 
 To launch the local web/server dev stack and Electron together, run:
 
@@ -221,8 +225,11 @@ bun dev
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
-from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
-share a different Hive home.
+from your global `~/.hive` state. Their cell worktrees live outside the source
+checkout under `$XDG_STATE_HOME/hive/dev-cells/` (or
+`~/.local/state/hive/dev-cells/`) so repository-local OpenCode plugins are not
+discovered twice. Set `HIVE_HOME` or `HIVE_CELLS_ROOT` explicitly to override
+these defaults.
 
 To launch the local web/server dev stack and Electron together, run:
 
@@ -901,7 +908,9 @@ Use this document whenever designing or reviewing UI. If pixels drift from these
 # Execution Discipline
 
 - Translate substantial requests into explicit acceptance criteria before implementation. Keep every criterion open until it has fresh evidence or a clearly reported blocker.
+- For a reported runtime failure, define the exact reproduction path as an acceptance criterion: the same top-level command, runtime mode, UI/API sequence, workspace or template, relevant persisted state, and externally visible result. Reproduce it before the fix when feasible and rerun that same path afterward; adjacent smoke tests, lower-level tests, or a different launcher do not satisfy this criterion.
 - Do not declare work complete because the code compiles, unit tests pass, or the happy path works. Verify the highest-risk shipped boundary affected by the change: compiled binary, installer, browser, Electron, process lifecycle, network, or device.
+- When behavior crosses process boundaries, inspect the live child boundary rather than only generated configuration or mocks. Verify the actual child environment, command, working directory, allocated/listening ports, logs, readiness, and cleanup whenever those values can affect the failure.
 - Before creating or updating a PR, inspect the CI workflow and run every merge-gating command affected by the diff. Jobs skipped on pull-request events are still mandatory local verification; if a required gate cannot run, report the exact blocker and do not describe the PR as ready or fully tested.
 - Never silently reduce scope to get a green result. Do not replace a packaged/runtime test with a dev server, mock the boundary under test, weaken assertions, remove coverage, skip cleanup, or substitute a partial workaround for the requested behavior.
 - Do not add retries, sleeps, broad catches, fallback paths, or compatibility layers merely to hide a failure. Use them only when the product requirement calls for them and the underlying failure mode is understood.
@@ -910,6 +919,7 @@ Use this document whenever designing or reviewing UI. If pixels drift from these
 - Prefer the smallest correct production fix, but do not confuse small with incomplete. A workaround is acceptable only when the user explicitly accepts the limitation and it is documented with a follow-up.
 - Request an independent code review after substantial or security-sensitive changes. Investigate concrete findings rather than dismissing them because the main test already passes.
 - Before the final response, run fresh verification for the completed source state, inspect the resulting artifacts, and confirm no owned processes, emulators, ports, or temporary resources leaked.
+- A broader E2E suite may supplement the exact reproduction but cannot replace it. If the exact user path cannot be exercised, report that limitation explicitly and do not claim the reported issue is fixed.
 - If credentials, hardware, destructive approval, or an ambiguous product decision truly blocks completion, stop and report the exact blocker, attempted diagnostics, current state, and next executable step. Never present blocked or partially verified work as done.
 
 
@@ -1335,8 +1345,9 @@ bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 - Use `bun run test:e2e:fast` or `bun run test:e2e:fast:spec <spec>` while iterating on cell creation, terminal handling, service orchestration, or workspace management.
 - Run the default `bun run test:e2e` before creating a PR for those areas; it is the CI-parity path with serialized workers, fresh runtime state, headless browser execution, and retained artifacts.
 - Run `bun run test:e2e:hive-dev` for changes to default templates, setup, generated config, or process readiness. This dedicated smoke clones the current committed branch and provisions the real default services; the standard suite uses lightweight fixtures instead.
+- For changes to `bun dev`/`dev:desktop`, launch environment forwarding, service supervision, PTY/process spawning, or port selection, run the affected top-level command and provision or retry a real cell through the browser. Confirm the cell reaches ready, its actual child processes use their allocated ports and cell-local environment, and restart/cleanup work; proving only that the parent API, renderer, or Electron shell starts is insufficient.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
-- Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
+- Keep fixture defaults aligned with the loopback `hive-e2e/hive-e2e` model so runtime tests do not depend on external credentials or provider version policy.
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
 - Use `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo bun run test:e2e:hive-dev` to override the source cloned by the parity smoke without mutating your real workspace.
 - For user-facing browser changes, verify with `agent-browser` when practical.

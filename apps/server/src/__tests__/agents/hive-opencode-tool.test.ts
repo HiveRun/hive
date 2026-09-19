@@ -300,7 +300,10 @@ describe("Hive OpenCode tools", () => {
         ],
       })
     );
-    const event = { cwd: run.worktreePath, env: {} };
+    const event = {
+      cwd: run.worktreePath,
+      env: { HIVE_CELLS_ROOT: "/parent/cells" },
+    };
 
     await run.plugin.shellCreate?.(event);
 
@@ -313,6 +316,7 @@ describe("Hive OpenCode tools", () => {
       SERVER_HTTP_PORT: String(TEST_SERVICE_PORT),
       SERVER_PORT: String(TEST_SERVICE_PORT),
     });
+    expect(event.env).not.toHaveProperty("HIVE_CELLS_ROOT");
 
     await fs.rm(run.worktreePath, { recursive: true, force: true });
   });

@@ -31,8 +31,9 @@ bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 - Use `bun run test:e2e:fast` or `bun run test:e2e:fast:spec <spec>` while iterating on cell creation, terminal handling, service orchestration, or workspace management.
 - Run the default `bun run test:e2e` before creating a PR for those areas; it is the CI-parity path with serialized workers, fresh runtime state, headless browser execution, and retained artifacts.
 - Run `bun run test:e2e:hive-dev` for changes to default templates, setup, generated config, or process readiness. This dedicated smoke clones the current committed branch and provisions the real default services; the standard suite uses lightweight fixtures instead.
+- For changes to `bun dev`/`dev:desktop`, launch environment forwarding, service supervision, PTY/process spawning, or port selection, run the affected top-level command and provision or retry a real cell through the browser. Confirm the cell reaches ready, its actual child processes use their allocated ports and cell-local environment, and restart/cleanup work; proving only that the parent API, renderer, or Electron shell starts is insufficient.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
-- Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
+- Keep fixture defaults aligned with the loopback `hive-e2e/hive-e2e` model so runtime tests do not depend on external credentials or provider version policy.
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
 - Use `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo bun run test:e2e:hive-dev` to override the source cloned by the parity smoke without mutating your real workspace.
 - For user-facing browser changes, verify with `agent-browser` when practical.

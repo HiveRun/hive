@@ -64,6 +64,7 @@ type ActivityRecord = {
 
 export type AgentSession = {
   id: string;
+  errorMessage?: string | null;
   modelId?: string;
   modelProviderId?: string;
   provider?: string;
@@ -406,6 +407,7 @@ export async function waitForChatRoute(options: {
 
 export async function createCellViaApi(options: {
   apiUrl: string;
+  description?: string;
   name: string;
   workspaceId?: string;
   templateLabel?: string;
@@ -420,6 +422,7 @@ export async function createCellViaApi(options: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
+      ...(options.description ? { description: options.description } : {}),
       name: options.name,
       templateId,
       workspaceId,
@@ -716,6 +719,42 @@ export async function fetchAgentMessageIds(
 ): Promise<Set<string>> {
   const messages = await fetchAgentMessages(apiUrl, sessionId);
   return new Set(messages.map((message) => message.id));
+}
+
+export async function waitForAgentMessage(options: {
+  apiUrl: string;
+  baselineMessageIds: ReadonlySet<string>;
+  cellId: string;
+  content: string;
+  errorMessage: string;
+  intervalMs?: number;
+  role: "assistant" | "user";
+  sessionId: string;
+  timeoutMs: number;
+}): Promise<void> {
+  await waitForCondition({
+    check: async () => {
+      const session = await fetchAgentSession(options.apiUrl, options.cellId);
+      if (session?.status === "error") {
+        throw new Error(
+          `Agent session ${session.id} failed: ${session.errorMessage ?? session.status}`
+        );
+      }
+      const messages = await fetchAgentMessages(
+        options.apiUrl,
+        options.sessionId
+      );
+      return messages.some(
+        (message) =>
+          !options.baselineMessageIds.has(message.id) &&
+          message.role === options.role &&
+          Boolean(message.content?.includes(options.content))
+      );
+    },
+    errorMessage: options.errorMessage,
+    intervalMs: options.intervalMs,
+    timeoutMs: options.timeoutMs,
+  });
 }
 
 export async function waitForAgentSession(options: {

@@ -6,6 +6,7 @@ import type { AgentMode } from "../agents/types";
 import { prepareEmbeddedOpencodeCliConfig } from "../opencode/embedded-cli-config";
 import {
   areCellEnvironmentsEqual,
+  buildCellProcessEnvironment,
   ensureCellEnvironment,
 } from "./cell-environment";
 import {
@@ -409,13 +410,12 @@ const createChatTerminalService = (): ChatTerminalService => {
           cols: DEFAULT_TERMINAL_COLS,
           rows: DEFAULT_TERMINAL_ROWS,
           cwd: args.workspacePath,
-          env: {
-            ...hostEnvironment,
+          env: buildCellProcessEnvironment(hostEnvironment, {
             ...args.environment,
             ...prepared.spawnOptions.env,
             TERM: TERMINAL_NAME,
             COLORTERM: process.env.COLORTERM ?? "truecolor",
-          },
+          }),
         }) as PtyTerminalProcess;
       } catch (error) {
         throw new Error(createSpawnErrorMessage(opencodeBinary, error));

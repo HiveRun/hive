@@ -12,7 +12,7 @@ import {
 import { hiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 
-import { resolveCellsRoot } from "../workspaces/registry";
+import { resolveCellRoots, resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
 const HEAD_PREFIX = "HEAD ";
@@ -1254,7 +1254,9 @@ export function createWorktreeManager(
   }
 
   function findWorktreeInfo(cellId: string): WorktreeInfo | null {
-    const expectedPath = join(cellsDir, cellId);
+    const expectedPaths = new Set(
+      resolveCellRoots().map((cellsRoot) => join(cellsRoot, cellId))
+    );
     const worktreeList = git("worktree", "list", "--porcelain");
     const sections = worktreeList.trim().split("\n\n");
 
@@ -1264,7 +1266,7 @@ export function createWorktreeManager(
         continue;
       }
 
-      if (parsed.path === expectedPath) {
+      if (expectedPaths.has(parsed.path)) {
         return {
           id: cellId,
           path: parsed.path,

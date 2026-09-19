@@ -6,12 +6,15 @@ type FixtureWorkspaceOptions = {
   workspaceRoot: string;
   readmeTitle: string;
   commitMessage: string;
+  llmBaseUrl: string;
   includeAndroidTemplate?: boolean;
   includeServicesTemplate?: boolean;
   includeSetupRetryTemplate?: boolean;
 };
 
 const EXECUTABLE_MODE = 0o755;
+export const E2E_MODEL_ID = "hive-e2e";
+export const E2E_PROVIDER_ID = "hive-e2e";
 
 const createViewerService = (title: string) => ({
   type: "process",
@@ -146,8 +149,8 @@ export async function createFixtureWorkspace(
 
   const hiveConfig = {
     opencode: {
-      defaultModel: "big-pickle",
-      defaultProvider: "opencode",
+      defaultModel: E2E_MODEL_ID,
+      defaultProvider: E2E_PROVIDER_ID,
     },
     defaults: {
       templateId: "e2e-template",
@@ -158,8 +161,8 @@ export async function createFixtureWorkspace(
         label: "E2E Template",
         type: "manual",
         agent: {
-          modelId: "big-pickle",
-          providerId: "opencode",
+          modelId: E2E_MODEL_ID,
+          providerId: E2E_PROVIDER_ID,
         },
       },
       ...(options.includeServicesTemplate
@@ -204,7 +207,30 @@ export async function createFixtureWorkspace(
 
   await writeFile(
     join(options.workspaceRoot, "opencode.json"),
-    `${JSON.stringify({ model: "opencode/big-pickle" }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        model: `${E2E_PROVIDER_ID}/${E2E_MODEL_ID}`,
+        provider: {
+          [E2E_PROVIDER_ID]: {
+            name: "Hive E2E",
+            npm: "@ai-sdk/openai-compatible",
+            options: {
+              apiKey: "hive-e2e",
+              baseURL: options.llmBaseUrl,
+            },
+            models: {
+              [E2E_MODEL_ID]: {
+                name: "Hive E2E",
+                tool_call: true,
+                limit: { context: 128_000, output: 4096 },
+              },
+            },
+          },
+        },
+      },
+      null,
+      2
+    )}\n`,
     "utf8"
   );
 

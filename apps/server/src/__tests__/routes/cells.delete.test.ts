@@ -33,6 +33,14 @@ const CELL_ID = "delete-teardown-cell";
 const HTTP_OK = 200;
 const HTTP_INTERNAL_ERROR = 500;
 const originalHiveHome = process.env.HIVE_HOME;
+const originalCellsRoot = process.env.HIVE_CELLS_ROOT;
+const MISSING_WORKSPACE_DELETE_RESULT = {
+  remainingCells: 0,
+  removeWorktreeCalls: 0,
+  status: HTTP_OK,
+  teardownCalls: 1,
+  workspaceExists: false,
+};
 
 const loadDeleteCell = async () => {
   const [cell] = await testDb.select().from(cells).where(eq(cells.id, CELL_ID));
@@ -86,6 +94,32 @@ const seedAndLoadDeleteCell = async (name: string) => {
 describe("cell deletion teardown lifecycle", () => {
   let hiveHome: string;
 
+  const deleteMissingWorkspaceCell = async (
+    workspacePath: string,
+    name: string
+  ) => {
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(join(workspacePath, "package.json"), "{}");
+    await seedRouteCell({ id: CELL_ID, name, workspacePath });
+    const { app, cleanup } = createMissingWorkspaceDeleteApp();
+
+    const response = await deleteRouteCellById(app, CELL_ID);
+    const remainingCells = await testDb
+      .select()
+      .from(cells)
+      .where(eq(cells.id, CELL_ID));
+    const workspaceExists = await access(workspacePath)
+      .then(() => true)
+      .catch(() => false);
+    return {
+      remainingCells: remainingCells.length,
+      removeWorktreeCalls: cleanup.removeWorktree.mock.calls.length,
+      status: response.status,
+      teardownCalls: cleanup.runCellTeardown.mock.calls.length,
+      workspaceExists,
+    };
+  };
+
   beforeAll(setupTestDb);
 
   beforeEach(async () => {
@@ -96,6 +130,7 @@ describe("cell deletion teardown lifecycle", () => {
 
   afterEach(async () => {
     process.env.HIVE_HOME = originalHiveHome;
+    process.env.HIVE_CELLS_ROOT = originalCellsRoot;
     await rm(hiveHome, { recursive: true, force: true });
   });
 
@@ -184,25 +219,26 @@ describe("cell deletion teardown lifecycle", () => {
   });
 
   it("deletes a cell when its workspace registry entry is missing", async () => {
+    process.env.HIVE_CELLS_ROOT = join(hiveHome, "external-cells");
     const workspacePath = join(hiveHome, "cells", CELL_ID);
-    await mkdir(workspacePath, { recursive: true });
-    await writeFile(join(workspacePath, "package.json"), "{}");
-    await seedRouteCell({
-      id: CELL_ID,
-      name: "Delete missing workspace registry",
-      workspacePath,
-    });
-    const { app, cleanup } = createMissingWorkspaceDeleteApp();
-
-    const response = await deleteRouteCellById(app, CELL_ID);
-
-    expect(response.status).toBe(HTTP_OK);
-    expect(cleanup.runCellTeardown).toHaveBeenCalledOnce();
-    expect(cleanup.removeWorktree).not.toHaveBeenCalled();
     expect(
-      await testDb.select().from(cells).where(eq(cells.id, CELL_ID))
-    ).toHaveLength(0);
-    await expect(access(workspacePath)).rejects.toThrow();
+      await deleteMissingWorkspaceCell(
+        workspacePath,
+        "Delete missing workspace registry"
+      )
+    ).toEqual(MISSING_WORKSPACE_DELETE_RESULT);
+  });
+
+  it("deletes an external-root cell when its workspace registry entry is missing", async () => {
+    const cellsRoot = join(hiveHome, "external-cells");
+    process.env.HIVE_CELLS_ROOT = cellsRoot;
+    const workspacePath = join(cellsRoot, CELL_ID);
+    expect(
+      await deleteMissingWorkspaceCell(
+        workspacePath,
+        "Delete external missing workspace registry"
+      )
+    ).toEqual(MISSING_WORKSPACE_DELETE_RESULT);
   });
 
   it("retains a cell rather than deleting an unsafe fallback path", async () => {

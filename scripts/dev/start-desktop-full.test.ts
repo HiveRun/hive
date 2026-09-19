@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { resolveDevServerPort } from "../../apps/web/vite.config";
 import { resolveDesktopDevConfiguration } from "./start-desktop-full";
@@ -18,36 +18,50 @@ const GRACEFUL_SHUTDOWN_DELAY_MS = 2000;
 const DEV_SERVER_GATE_SETTLE_MS = 750;
 const STANDARD_PORT_OVERRIDE = 41_999;
 const DESKTOP_PORT_OVERRIDE = 42_001;
+const DEV_WORKSPACE_ID_PATTERN = /^[a-f0-9]{12}$/;
+
+async function withReservedDesktopPorts(
+  run: (ports: { backendPort: number; rendererPort: number }) => Promise<void>
+) {
+  const { backendPort, fixture } = await reserveDesktopPorts();
+  try {
+    await run({ backendPort, rendererPort: fixture.basePort });
+  } finally {
+    await closeServers(fixture.servers);
+  }
+}
+
+async function reserveDesktopPorts() {
+  const fixture = await reserveConsecutivePorts(2);
+  const backend = await reservePort();
+  const backendPort = resolveServerPort(backend);
+  await closeServer(backend);
+  return { backendPort, fixture };
+}
 
 describe("desktop development launcher", () => {
   test("propagates the requested renderer port and isolated runtime settings", async () => {
-    const fixture = await reserveConsecutivePorts(2);
-    const backend = await reservePort();
-    const backendPort = resolveServerPort(backend);
-    await closeServer(backend);
-
-    try {
+    await withReservedDesktopPorts(async ({ backendPort, rendererPort }) => {
       const hiveHome = join(createTempDir(), "hive-home");
       const configuration = await resolveDesktopDevConfiguration(
         process.cwd(),
         {
           ...process.env,
           HIVE_DESKTOP_BACKEND_URL: `http://127.0.0.1:${backendPort}`,
-          HIVE_DESKTOP_URL: `http://127.0.0.1:${fixture.basePort}`,
+          HIVE_DESKTOP_URL: `http://127.0.0.1:${rendererPort}`,
           HIVE_HOME: hiveHome,
         },
         TEST_PROCESS_ID
       );
 
-      expect(configuration.desktopUrl).toBe(
-        `http://127.0.0.1:${fixture.basePort}`
-      );
+      expect(configuration.desktopUrl).toBe(`http://127.0.0.1:${rendererPort}`);
       expect(configuration.env.HIVE_DESKTOP_DEV_PORT).toBe(
-        String(fixture.basePort)
+        String(rendererPort)
       );
-      expect(configuration.env.WEB_PORT).toBe(String(fixture.basePort));
+      expect(configuration.env.WEB_PORT).toBe(String(rendererPort));
       expect(configuration.env.HIVE_DESKTOP_API_PORT).toBe(String(backendPort));
       expect(configuration.env.HIVE_HOME).toBe(hiveHome);
+      expect(configuration.env.HIVE_CELLS_ROOT).toBeUndefined();
       expect(configuration.env.HIVE_WORKSPACE_ROOT).toBe(process.cwd());
       expect(configuration.readyFilePath).toBe(
         join(hiveHome, `desktop-dev-ready-${TEST_PROCESS_ID}.pid`)
@@ -55,9 +69,33 @@ describe("desktop development launcher", () => {
       expect(configuration.rendererReadyFilePath).toBe(
         join(hiveHome, `desktop-renderer-ready-${TEST_PROCESS_ID}.json`)
       );
-    } finally {
-      await closeServers(fixture.servers);
-    }
+    });
+  });
+
+  test("places default development cells outside the source workspace", async () => {
+    await withReservedDesktopPorts(async ({ backendPort, rendererPort }) => {
+      const stateHome = createTempDir();
+      const configuration = await resolveDesktopDevConfiguration(
+        process.cwd(),
+        {
+          HIVE_DESKTOP_BACKEND_URL: `http://127.0.0.1:${backendPort}`,
+          HIVE_DESKTOP_URL: `http://127.0.0.1:${rendererPort}`,
+          XDG_STATE_HOME: stateHome,
+        },
+        TEST_PROCESS_ID
+      );
+      const cellsRoot = configuration.env.HIVE_CELLS_ROOT;
+      const pathFromWorkspace = cellsRoot
+        ? relative(process.cwd(), cellsRoot)
+        : "";
+
+      expect(
+        cellsRoot?.startsWith(`${join(stateHome, "hive", "dev-cells")}${sep}`)
+      ).toBe(true);
+      expect(basename(cellsRoot ?? "")).toMatch(DEV_WORKSPACE_ID_PATTERN);
+      expect(pathFromWorkspace.startsWith(`..${sep}`)).toBe(true);
+      expect(isAbsolute(pathFromWorkspace)).toBe(false);
+    });
   });
 
   test("preserves PORT for ordinary non-desktop Vite development", () => {
@@ -265,10 +303,7 @@ async function verifySignalShutdown(options: {
 }
 
 async function spawnIntegrationLauncher(extraEnv: NodeJS.ProcessEnv) {
-  const fixture = await reserveConsecutivePorts(2);
-  const backend = await reservePort();
-  const backendPort = resolveServerPort(backend);
-  await closeServer(backend);
+  const { backendPort, fixture } = await reserveDesktopPorts();
   const tempDir = createTempDir();
   const hiveHome = join(tempDir, "hive-home");
   const apiScriptPath = join(tempDir, "fake-api.ts");
