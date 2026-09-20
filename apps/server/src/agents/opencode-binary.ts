@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 
-export const OPENCODE_VERSION = "0.0.0-beta-18866";
+export const OPENCODE_VERSION = "0.0.0-beta-19271";
 const EXPECTED_VERSION_OUTPUT = `opencode2 v${OPENCODE_VERSION}`;
 const BINARY_VALIDATION_TIMEOUT_MS = 2000;
 

@@ -10,7 +10,7 @@ RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
 VERSION="${HIVE_VERSION:-latest}"
 CUSTOM_URL="${HIVE_INSTALL_URL:-}"
-EXPECTED_OPENCODE_VERSION="opencode2 v0.0.0-beta-18866"
+EXPECTED_OPENCODE_VERSION="opencode2 v0.0.0-beta-19271"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then

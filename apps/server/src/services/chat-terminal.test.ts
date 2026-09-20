@@ -93,7 +93,7 @@ beforeEach(() => {
   const opencodeBinary = join(root, "opencode2");
   writeFileSync(
     opencodeBinary,
-    "#!/bin/sh\nprintf '%s\\n' 'opencode2 v0.0.0-beta-18866'\n"
+    "#!/bin/sh\nprintf '%s\\n' 'opencode2 v0.0.0-beta-19271'\n"
   );
   chmodSync(opencodeBinary, EXECUTABLE_FILE_MODE);
   process.env.HIVE_HOME = join(root, "hive-home");

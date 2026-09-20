@@ -43,7 +43,8 @@ const RUNTIME_SESSION_ID = "session-runtime";
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
 const PROVIDER_CATALOG_READY_TIMEOUT_MS = 15_000;
 const EXPECTED_RECONNECT_CLIENT_ACQUISITIONS = 3;
-const EXPECTED_PARTIAL_CATALOG_CALLS = 3;
+const EXPECTED_CONFIGURED_CATALOG_CALLS = 3;
+const EXPECTED_PARTIAL_CATALOG_CALLS = 4;
 
 type ClientStub = OpenCodeV2ClientFixture;
 
@@ -251,6 +252,27 @@ describe("agent model selection", () => {
       modelId,
       providerId,
     };
+  }
+
+  function mockDisconnectedProviderCatalog() {
+    const catalog = createCodexProviderCatalog();
+    const provider = catalog.providers[0];
+    if (!provider) {
+      throw new Error("Expected provider fixture");
+    }
+    provider.integrationID = "test-auth";
+    mockProviderCatalog(clientStub, catalog);
+    clientStub.spies.listIntegrations.mockResolvedValue({
+      location: clientStub.location,
+      data: [
+        {
+          id: "test-auth",
+          name: "Test Auth",
+          methods: [{ type: "key", label: "API key" }],
+          connections: [],
+        },
+      ],
+    });
   }
 
   async function startPlanAfterQuestionAnswer(targetCellId: string) {
@@ -633,7 +655,9 @@ describe("agent model selection", () => {
     );
 
     expectSessionModel(session, providerId, modelId);
-    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(2);
+    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(
+      EXPECTED_CONFIGURED_CATALOG_CALLS
+    );
   });
 
   it("waits until both the configured model and provider enter the catalog", async () => {
@@ -692,7 +716,7 @@ describe("agent model selection", () => {
     const session = await ensureCodexBuildSession();
 
     expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
-    expect(clientStub.spies.listProviders).toHaveBeenCalledOnce();
+    expect(clientStub.spies.listProviders).toHaveBeenCalledTimes(2);
   });
 
   it("fails after the configured model catalog readiness timeout", async () => {
@@ -717,6 +741,50 @@ describe("agent model selection", () => {
 
     expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
     expectSelectedModel(clientStub, session.id, CODEX_MODEL_PATH);
+  });
+
+  it("checks provider authentication before creating the OpenCode session", async () => {
+    const workspaceRootPath = "/tmp/model-test-root";
+    await testDb
+      .update(cells)
+      .set({ workspaceRootPath })
+      .where(eq(cells.id, cellId));
+    mockDisconnectedProviderCatalog();
+
+    await expect(ensureCodexBuildSession()).rejects.toThrow(
+      'Provider "opencode" is not connected'
+    );
+    expect(clientStub.spies.listProviders).toHaveBeenNthCalledWith(1, {
+      location: { directory: workspaceRootPath },
+    });
+    expect(clientStub.spies.listProviders).toHaveBeenNthCalledWith(2, {
+      location: { directory: TEST_WORKSPACE_PATH },
+    });
+    expect(clientStub.session.create).not.toHaveBeenCalled();
+  });
+
+  it("checks authentication when deferring model selection to OpenCode", async () => {
+    const template = mockHiveConfig.templates[TEMPLATE_ID];
+    if (!template) {
+      throw new Error("Expected template fixture");
+    }
+    const { agent: _agent, ...templateWithoutAgent } = template;
+    loadHiveConfigMock.mockResolvedValue({
+      ...mockHiveConfig,
+      templates: { [TEMPLATE_ID]: templateWithoutAgent },
+    });
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
+      defaultModel: {
+        providerId: TEST_PROVIDER_ID,
+        modelId: CODEX_MODEL_PATH,
+      },
+    });
+    mockDisconnectedProviderCatalog();
+
+    await expect(ensureAgentSession(cellId)).rejects.toThrow(
+      'Provider "opencode" is not connected'
+    );
+    expect(clientStub.session.create).not.toHaveBeenCalled();
   });
 
   it("keeps explicit plan-mode model overrides when session metadata reports another model", async () => {

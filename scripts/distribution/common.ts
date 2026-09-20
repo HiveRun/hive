@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 export const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 export const OPENCODE_PACKAGE_NAME = "@opencode-ai/cli";
-export const OPENCODE_VERSION = "0.0.0-beta-18866";
+export const OPENCODE_VERSION = "0.0.0-beta-19271";
 export const OPENCODE_VERSION_OUTPUT = `opencode2 v${OPENCODE_VERSION}`;
 
 export const openCodeReleaseBinaryName = (platform = process.platform) =>

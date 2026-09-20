@@ -4,7 +4,7 @@ const clientMocks = {
   healthGet: vi.fn(() =>
     Promise.resolve({
       healthy: true as const,
-      version: "0.0.0-beta-18866",
+      version: "0.0.0-beta-19271",
       pid: 123,
     })
   ),
@@ -41,7 +41,7 @@ vi.mock("@opencode-ai/client/service", () => ({
 }));
 
 vi.mock("../../agents/opencode-binary", () => ({
-  OPENCODE_VERSION: "0.0.0-beta-18866",
+  OPENCODE_VERSION: "0.0.0-beta-19271",
   resolveOpencodeBinary: () => "/opt/hive/opencode2",
 }));
 
@@ -114,7 +114,7 @@ describe("shared OpenCode service", () => {
     expect(serviceMocks.ensure).toHaveBeenCalledOnce();
     expect(serviceMocks.ensure).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: "0.0.0-beta-18866",
+        version: "0.0.0-beta-19271",
         command: ["/opt/hive/opencode2", "serve", "--service"],
         env: {
           OPENCODE_CLIENT: "hive",

@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.s
 
 The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, exposes `hive` and `opencode2` through `~/.hive/bin`, and updates your shell PATH so the CLIs are immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
-Every Hive release includes the exact `opencode2` native binary supplied by `@opencode-ai/cli@0.0.0-beta-18866`. Installation configures Hive to use that package-managed binary without downloading a separate OpenCode CLI. The installed `opencode2` launcher disables auto-update so preview releases cannot silently switch data directories or become incompatible with Hive.
+Every Hive release includes the exact `opencode2` native binary supplied by `@opencode-ai/cli@0.0.0-beta-19271`. Installation configures Hive to use that package-managed binary without downloading a separate OpenCode CLI. The installed `opencode2` launcher disables auto-update so preview releases cannot silently switch data directories or become incompatible with Hive.
 
 In a source checkout, use the pinned workspace binary when you need the standalone TUI:
 

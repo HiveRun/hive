@@ -197,6 +197,9 @@ export function createOpenCodeV2ClientFixture(input: {
     listProviders: vi.fn<OpenCodeClient["provider"]["list"]>(async () =>
       Promise.resolve({ location, data: [] })
     ),
+    listIntegrations: vi.fn<OpenCodeClient["integration"]["list"]>(async () =>
+      Promise.resolve({ location, data: [] })
+    ),
   };
   const stub = {
     session: {
@@ -222,6 +225,7 @@ export function createOpenCodeV2ClientFixture(input: {
     },
     plugin: { list: spies.listPlugins },
     provider: { list: spies.listProviders },
+    integration: { list: spies.listIntegrations },
   };
 
   return {

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createTempDirFixture } from "./dev/test-temp-dir";
 
 const installScript = fileURLToPath(new URL("./install.sh", import.meta.url));
-const expectedVersion = "opencode2 v0.0.0-beta-18866";
+const expectedVersion = "opencode2 v0.0.0-beta-19271";
 const EXECUTABLE_PERMISSIONS = 0o755;
 const createTempDirectory = createTempDirFixture("hive-installer-");
 

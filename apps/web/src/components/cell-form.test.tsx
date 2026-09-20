@@ -41,6 +41,23 @@ vi.mock("@/components/model-selector", () => ({
   },
 }));
 
+vi.mock("@/components/provider-connections", () => ({
+  ProviderConnections: ({ onReadyChange, providerId }: any) => {
+    const initializedProviderRef = useRef<string | undefined>(undefined);
+
+    useEffect(() => {
+      if (initializedProviderRef.current === providerId) {
+        return;
+      }
+
+      initializedProviderRef.current = providerId;
+      onReadyChange(true);
+    }, [onReadyChange, providerId]);
+
+    return <div data-testid="mock-provider-connections" />;
+  },
+}));
+
 vi.mock("@/queries/cells", () => ({
   cellMutations: {
     create: {

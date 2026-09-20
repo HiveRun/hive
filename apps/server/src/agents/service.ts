@@ -28,6 +28,7 @@ import {
 } from "./hive-opencode-tool";
 import { loadEffectiveOpencodeDefaults } from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
+import { assertProviderConnected } from "./provider-auth";
 import type {
   AgentMessagePart,
   AgentMessageRecord,
@@ -1664,6 +1665,7 @@ async function ensureRuntimeForCellUnlocked(
     abortController,
   } = await startOpencodeRuntime({
     cell,
+    authenticationProviderId: selection.providerId,
     providerId: requestedProviderId,
     modelId: requestedModelId,
     variant: requestedVariant,
@@ -1832,18 +1834,23 @@ async function waitForConfiguredCatalogModel(args: {
   return catalog;
 }
 
-type StartRuntimeArgs = {
+type RuntimeSessionOptions = {
   cell: Cell;
+  authenticationProviderId?: string;
   providerId?: string;
   modelId?: string;
   variant?: string;
   startMode: AgentMode;
   force: boolean;
+};
+
+type StartRuntimeArgs = RuntimeSessionOptions & {
   deps: AgentRuntimeDependencies;
 };
 
 async function startOpencodeRuntime({
   cell,
+  authenticationProviderId,
   providerId,
   modelId,
   variant,
@@ -1859,6 +1866,7 @@ async function startOpencodeRuntime({
   const { session, created } = await resolveOpencodeSession({
     client,
     cell,
+    authenticationProviderId,
     providerId,
     modelId,
     variant,
@@ -1942,19 +1950,14 @@ async function startOpencodeRuntime({
   return { runtime, created, abortController };
 }
 
-type ResolveSessionArgs = {
+type ResolveSessionArgs = RuntimeSessionOptions & {
   client: OpenCodeClient;
-  cell: Cell;
-  providerId?: string;
-  modelId?: string;
-  variant?: string;
-  startMode: AgentMode;
-  force: boolean;
 };
 
 async function resolveOpencodeSession({
   client,
   cell,
+  authenticationProviderId,
   providerId,
   modelId,
   variant,
@@ -1967,6 +1970,12 @@ async function resolveOpencodeSession({
       return { session: existing, created: false };
     }
   }
+
+  await assertProviderConnected({
+    providerId: authenticationProviderId,
+    workspacePath: cell.workspacePath,
+    client,
+  });
 
   const created = await client.session.create({
     title: cell.name,
