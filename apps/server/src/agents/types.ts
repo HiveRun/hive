@@ -77,6 +77,7 @@ export type AgentMessageRecord = {
   parentId?: string | null;
   errorName?: string | null;
   errorMessage?: string | null;
+  errorStatus?: number | null;
 };
 
 export type AgentStreamEvent =

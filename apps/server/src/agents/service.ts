@@ -336,6 +336,8 @@ type RuntimeHandle = {
   abortController: AbortController;
   status: AgentSessionStatus;
   errorMessage: string | null;
+  lastPromptSentAt: number | null;
+  latestMessageReconciled: boolean;
   pendingInterrupt: boolean;
   preserveResumeOnInterrupt: boolean;
   startMode: AgentMode;
@@ -1899,6 +1901,8 @@ async function startOpencodeRuntime({
     abortController,
     status: "awaiting_input",
     errorMessage: null,
+    lastPromptSentAt: null,
+    latestMessageReconciled: false,
     pendingInterrupt: false,
     preserveResumeOnInterrupt: false,
     startMode,
@@ -1906,6 +1910,9 @@ async function startOpencodeRuntime({
     modeUpdatedAt: new Date().toISOString(),
     async sendMessage(input) {
       runtime.pendingInterrupt = false;
+      runtime.session.outcome = undefined;
+      runtime.lastPromptSentAt = Date.now();
+      runtime.latestMessageReconciled = false;
 
       try {
         await waitForHivePluginReady(
@@ -2233,30 +2240,114 @@ async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
     runtime.client,
     runtime.session.id
   );
-  if (hasRecoverableLiveState(liveState)) {
+  if (liveState.permissions.length > 0 || liveState.forms.length > 0) {
     await applyRuntimeLiveState(runtime, liveState);
     return;
   }
 
-  if (runtime.status === "error") {
+  if (liveState.active || hasQueuedExecution(liveState)) {
+    await applyRuntimeLiveState(runtime, liveState);
     return;
   }
 
-  if (runtime.session.outcome === "failed") {
-    await applyRuntimeStatus(
-      runtime,
-      "error",
-      runtime.errorMessage ?? undefined
-    );
+  if (
+    outcomeBelongsToCurrentPrompt(runtime) &&
+    (runtime.session.outcome === "succeeded" ||
+      (runtime.session.outcome === "interrupted" &&
+        !runtime.cell.resumeAgentSessionOnStartup))
+  ) {
+    runtime.lastPromptSentAt = null;
+    runtime.latestMessageReconciled = true;
+    await applyRuntimeStatus(runtime, "awaiting_input");
     return;
   }
-  if (
-    runtime.session.outcome === "succeeded" ||
-    (runtime.session.outcome === "interrupted" &&
-      !runtime.cell.resumeAgentSessionOnStartup)
-  ) {
-    await applyRuntimeStatus(runtime, "awaiting_input");
+
+  if (await synchronizeRuntimeFailure(runtime)) {
+    return;
   }
+
+  if (hasRecoverableLiveState(liveState)) {
+    await applyRuntimeLiveState(runtime, liveState);
+    return;
+  }
+}
+
+async function synchronizeRuntimeFailure(
+  runtime: RuntimeHandle
+): Promise<boolean> {
+  if (await applyKnownRuntimeFailure(runtime)) {
+    return true;
+  }
+
+  if (runtime.latestMessageReconciled && runtime.lastPromptSentAt === null) {
+    return false;
+  }
+
+  const latestError = await loadLatestSessionError(runtime);
+  runtime.latestMessageReconciled = true;
+  const belongsToPendingPrompt =
+    latestError &&
+    runtime.lastPromptSentAt !== null &&
+    latestError.createdAt >= runtime.lastPromptSentAt;
+  const hasNoPendingPrompt = runtime.lastPromptSentAt === null;
+  if (latestError && (belongsToPendingPrompt || hasNoPendingPrompt)) {
+    runtime.lastPromptSentAt = null;
+    await applyRuntimeStatus(runtime, "error", latestError.message);
+    return true;
+  }
+
+  return false;
+}
+
+async function applyKnownRuntimeFailure(
+  runtime: RuntimeHandle
+): Promise<boolean> {
+  if (runtime.status !== "error" && runtime.session.outcome !== "failed") {
+    return false;
+  }
+
+  if (
+    runtime.session.outcome === "failed" &&
+    !outcomeBelongsToCurrentPrompt(runtime)
+  ) {
+    return false;
+  }
+
+  const latestError = runtime.errorMessage
+    ? undefined
+    : await loadLatestSessionError(runtime);
+  const message = runtime.errorMessage ?? latestError?.message;
+  if (runtime.status !== "error" || message !== runtime.errorMessage) {
+    runtime.lastPromptSentAt = null;
+    await applyRuntimeStatus(runtime, "error", message);
+  }
+  return true;
+}
+
+function outcomeBelongsToCurrentPrompt(runtime: RuntimeHandle): boolean {
+  return (
+    runtime.lastPromptSentAt === null ||
+    runtime.session.time.updated >= runtime.lastPromptSentAt
+  );
+}
+
+async function loadLatestSessionError(
+  runtime: RuntimeHandle
+): Promise<{ message: string; createdAt: number } | undefined> {
+  const page = await runtime.client.message.list({
+    sessionID: runtime.session.id,
+    limit: 1,
+    order: "desc",
+  });
+  const latest = page.data[0];
+  if (!latest) {
+    return;
+  }
+
+  const error = getMessageError(latest);
+  return error
+    ? { message: formatSessionError(error), createdAt: latest.time.created }
+    : undefined;
 }
 
 type RuntimeLiveState = {
@@ -2304,6 +2395,10 @@ function hasRecoverableLiveState(state: RuntimeLiveState): boolean {
     state.permissions.length > 0 ||
     state.forms.length > 0
   );
+}
+
+function hasQueuedExecution(state: RuntimeLiveState): boolean {
+  return state.inbox.some((item) => item.type !== "synthetic");
 }
 
 async function applyRuntimeLiveState(
@@ -2448,12 +2543,16 @@ async function updateRuntimeStatusFromEvent(
 ): Promise<void> {
   if (event.type === "session.execution.started") {
     runtime.session.outcome = undefined;
+    runtime.latestMessageReconciled = false;
   } else if (event.type === "session.execution.succeeded") {
     runtime.session.outcome = "succeeded";
+    runtime.latestMessageReconciled = true;
   } else if (event.type === "session.execution.failed") {
     runtime.session.outcome = "failed";
+    runtime.latestMessageReconciled = true;
   } else if (event.type === "session.execution.interrupted") {
     runtime.session.outcome = "interrupted";
+    runtime.latestMessageReconciled = true;
   }
 
   if (
@@ -2489,7 +2588,10 @@ export function resolveRuntimeStatusFromEvent(
 ): { status: AgentSessionStatus; error?: string } | null {
   switch (event.type) {
     case "session.execution.failed":
-      return { status: "error", error: event.data.error.message };
+      return {
+        status: "error",
+        error: formatSessionError(event.data.error),
+      };
     case "session.idle":
     case "session.execution.succeeded":
     case "session.execution.interrupted":
@@ -2540,8 +2642,6 @@ function serializeMessage(
       ? message.type
       : "system";
   const error = getMessageError(message);
-  const isAborted = isMessageAbortedError(error);
-
   return {
     id: message.id,
     sessionId,
@@ -2551,9 +2651,23 @@ function serializeMessage(
     state: determineMessageState(message, error),
     createdAt: new Date(message.time.created).toISOString(),
     parentId: null,
-    errorName: isAborted ? (error?.type ?? null) : null,
-    errorMessage: isAborted ? (error?.message ?? null) : null,
+    errorName: error?.type ?? null,
+    errorMessage: error?.message ?? null,
+    errorStatus: error?.status ?? null,
   };
+}
+
+function formatSessionError(error: {
+  type: string;
+  message: string;
+  status?: number;
+}): string {
+  const message = error.message.trim();
+  if (message) {
+    return message;
+  }
+  const status = error.status ? ` (${error.status})` : "";
+  return `${error.type}${status}`;
 }
 
 function getMessageError(message: SessionMessageInfo) {

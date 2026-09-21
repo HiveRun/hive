@@ -211,6 +211,27 @@ describe("useGlobalAgentMonitor", () => {
     expect(eventSource.instances).toHaveLength(1);
   });
 
+  it("keeps provider error details from status events", async () => {
+    const queryClient = new QueryClient();
+    const stream = await renderMonitor(queryClient);
+
+    act(() => {
+      stream?.emit(
+        "status",
+        JSON.stringify({
+          sessionId: "session-1",
+          status: "error",
+          error: "OpenAI authorization failed",
+        })
+      );
+    });
+
+    await expectSessionUpdate(queryClient, {
+      status: "error",
+      errorMessage: "OpenAI authorization failed",
+    });
+  });
+
   it("refreshes session state after the global stream reconnects", async () => {
     const queryClient = new QueryClient();
     const stream = await renderMonitor(queryClient);

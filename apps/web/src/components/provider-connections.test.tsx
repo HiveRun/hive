@@ -53,6 +53,8 @@ vi.mock("@/queries/provider-auth", () => ({
 
 import { ProviderConnections } from "./provider-connections";
 
+const PROVIDER_HEADING_PATTERN = /^(OpenAI|OpenCode)$/;
+
 describe("ProviderConnections", () => {
   let queryClient: QueryClient;
 
@@ -151,6 +153,68 @@ describe("ProviderConnections", () => {
         screen.queryByText("Authorize the provider")
       ).not.toBeInTheDocument()
     );
+  });
+
+  it("allows an existing connection to be replaced", async () => {
+    const catalog = keyCatalog();
+    const integration = catalog.integrations[0];
+    if (!integration) {
+      throw new Error("Expected provider integration fixture");
+    }
+    mocks.authCatalog.mockResolvedValue({
+      ...catalog,
+      integrations: [
+        {
+          ...integration,
+          connected: true,
+          connectionLabels: ["default", "OPENAI_API_KEY"],
+        },
+      ],
+    });
+
+    render(
+      <ProviderConnections providerId="openai" workspaceId="workspace-1" />,
+      { wrapper: TestQueryProvider }
+    );
+
+    expect(await screen.findByText("default, OPENAI_API_KEY")).toBeVisible();
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(await screen.findByLabelText("API key")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "temporary-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(await screen.findByLabelText("API key")).toHaveValue("");
+  });
+
+  it("lists disconnected integrations after connected providers", async () => {
+    mocks.authCatalog.mockResolvedValue({
+      providers: [
+        missingProvider("opencode", "OpenCode Zen", "opencode-auth"),
+        { id: "openai", name: "OpenAI", state: "connected" },
+      ],
+      integrations: [
+        keyIntegration("opencode-auth", "OpenCode", []),
+        {
+          ...keyIntegration("openai-auth", "OpenAI", []),
+          connected: true,
+          connectionLabels: ["default"],
+        },
+      ],
+    });
+
+    render(<ProviderConnections workspaceId="workspace-1" />, {
+      wrapper: TestQueryProvider,
+    });
+
+    const headings = await screen.findAllByText(PROVIDER_HEADING_PATTERN);
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      "OpenAI",
+      "OpenCode",
+    ]);
   });
 
   it("allows OpenCode fallback when the selected provider is absent", async () => {

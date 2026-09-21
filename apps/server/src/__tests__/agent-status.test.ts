@@ -74,6 +74,15 @@ const statusCases = [
     }),
     expected: { status: "error", error: "boom" },
   },
+  {
+    name: "falls back to structured error details when the message is empty",
+    event: events.executionFailed({
+      type: "Integration.Authorization",
+      message: "",
+      status: 401,
+    }),
+    expected: { status: "error", error: "Integration.Authorization (401)" },
+  },
 ] satisfies readonly StatusCase[];
 
 describe("resolveRuntimeStatusFromEvent", () => {

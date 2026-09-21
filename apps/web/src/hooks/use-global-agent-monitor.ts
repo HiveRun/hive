@@ -227,7 +227,11 @@ export function useGlobalAgentMonitor() {
       }
     };
 
-    const updateMonitorStatus = (sessionId: string, status: string) => {
+    const updateMonitorStatus = (
+      sessionId: string,
+      status: string,
+      error?: string
+    ) => {
       const monitor = monitors.get(sessionId);
       if (!monitor) {
         return;
@@ -235,6 +239,7 @@ export function useGlobalAgentMonitor() {
       updateSessionQuery(queryClient, monitor.sessionQueryKey, (previous) => ({
         ...previous,
         status,
+        errorMessage: error ?? null,
       }));
       cancelPendingModeTransition(sessionId);
       recordStatus(monitor, status);
@@ -245,8 +250,9 @@ export function useGlobalAgentMonitor() {
         const payload = JSON.parse(event.data) as {
           sessionId: string;
           status: string;
+          error?: string;
         };
-        updateMonitorStatus(payload.sessionId, payload.status);
+        updateMonitorStatus(payload.sessionId, payload.status, payload.error);
       } catch {
         // ignore malformed events
       }

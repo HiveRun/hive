@@ -45,6 +45,7 @@ const PROVIDER_CATALOG_READY_TIMEOUT_MS = 15_000;
 const EXPECTED_RECONNECT_CLIENT_ACQUISITIONS = 3;
 const EXPECTED_CONFIGURED_CATALOG_CALLS = 3;
 const EXPECTED_PARTIAL_CATALOG_CALLS = 4;
+const HISTORICAL_ERROR_OFFSET_MS = 100;
 
 type ClientStub = OpenCodeV2ClientFixture;
 
@@ -292,7 +293,6 @@ describe("agent model selection", () => {
 
     expect(session.modelId).toBe("restored-model");
     expect(session.modelProviderId).toBe(TEST_PROVIDER_ID);
-    expect(clientStub.spies.listSessionMessages).not.toHaveBeenCalled();
   });
 
   it("sends prompts using the updated provider/model selection", async () => {
@@ -465,23 +465,23 @@ describe("agent model selection", () => {
     expect(clientStub.spies.listSessionMessages).toHaveBeenCalledTimes(2);
   });
 
-  it("serializes native v2 assistant messages and structured errors", async () => {
+  it("serializes native v2 assistant and provider errors", async () => {
     const session = await ensureAgentSession(cellId);
-    const created = Date.now();
     clientStub.spies.listSessionMessages.mockResolvedValue({
       data: [
-        {
-          id: "msg-aborted",
-          type: "assistant",
-          agent: "plan",
-          model: createModel(TEST_PROVIDER_ID, TEMPLATE_MODEL_ID),
-          time: { created },
-          content: [{ type: "text", text: "Partial response" }],
-          error: {
+        createAssistantErrorMessage(
+          "msg-aborted",
+          {
             type: "MessageAbortedError",
             message: "Request interrupted",
           },
-        },
+          [{ type: "text", text: "Partial response" }]
+        ),
+        createAssistantErrorMessage("msg-provider-error", {
+          type: "provider.quota",
+          message: "No credits remaining",
+          status: 429,
+        }),
       ],
       cursor: {},
     });
@@ -496,6 +496,13 @@ describe("agent model selection", () => {
         parentId: null,
         errorName: "MessageAbortedError",
         errorMessage: "Request interrupted",
+      }),
+      expect.objectContaining({
+        id: "msg-provider-error",
+        state: "error",
+        errorName: "provider.quota",
+        errorMessage: "No credits remaining",
+        errorStatus: 429,
       }),
     ]);
   });
@@ -1073,17 +1080,164 @@ describe("agent model selection", () => {
     });
   });
 
-  it("reports failed v2 session outcomes without inspecting history", async () => {
+  it("reports failed v2 session outcomes when history has no error", async () => {
     const session = await ensureAgentSession(cellId);
-    clientStub.session.get.mockResolvedValue({
-      ...createMockSession(),
-      outcome: "failed",
+    mockSessionOutcome(clientStub, "failed");
+
+    const failed = await fetchAgentSession(session.id);
+
+    expect(failed?.status).toBe("error");
+    expectLatestMessageLookup(clientStub, session.id);
+  });
+
+  it("recovers a missed asynchronous failure from the latest message", async () => {
+    const session = await ensureAgentSession(cellId);
+    await sendAgentMessage(session.id, "Trigger provider failure");
+    const failedAt = Date.now();
+    clientStub.session.inbox.list.mockResolvedValue([
+      {
+        id: "msg-system-reminder",
+        sessionID: session.id,
+        timeCreated: failedAt,
+        type: "synthetic",
+        payload: {
+          text: "Continue in plan mode",
+        },
+        delivery: "steer",
+      },
+    ]);
+    clientStub.spies.listSessionMessages.mockClear();
+    clientStub.spies.listSessionMessages.mockResolvedValue({
+      data: [
+        createAssistantErrorMessage(
+          "msg-provider-error",
+          { type: "Integration.Authorization", message: "", status: 401 },
+          [],
+          failedAt
+        ),
+      ],
+      cursor: {},
+    });
+
+    const failed = await fetchAgentSession(session.id);
+
+    expect(failed).toMatchObject({
+      status: "error",
+      errorMessage: "Integration.Authorization (401)",
+    });
+    expectLatestMessageLookup(clientStub, session.id);
+  });
+
+  it("recovers a latest-message failure after rebuilding the runtime", async () => {
+    const session = await ensureAgentSession(cellId);
+    await closeAllAgentSessions();
+    clientStub.spies.listSessionMessages.mockResolvedValue({
+      data: [
+        createAssistantErrorMessage("msg-recovered-error", {
+          type: "provider.quota",
+          message: "No credits remaining",
+          status: 429,
+        }),
+      ],
+      cursor: {},
+    });
+
+    const recovered = await fetchAgentSession(session.id);
+
+    expect(recovered).toMatchObject({
+      status: "error",
+      errorMessage: "No credits remaining",
+    });
+  });
+
+  it("keeps a queued retry working despite an older failed outcome", async () => {
+    const session = await ensureAgentSession(cellId);
+    await sendAgentMessage(session.id, "Retry provider request");
+    mockSessionOutcome(clientStub, "failed");
+    clientStub.session.inbox.list.mockResolvedValue([
+      {
+        id: "msg-retry",
+        sessionID: session.id,
+        timeCreated: Date.now(),
+        type: "user",
+        payload: { text: "Retry provider request" },
+        delivery: "queue",
+      },
+    ]);
+    clientStub.spies.listSessionMessages.mockClear();
+
+    const retrying = await fetchAgentSession(session.id);
+
+    expect(retrying?.status).toBe("working");
+    expect(clientStub.spies.listSessionMessages).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "succeeded"] as const)(
+    "does not restore a stale $outcome outcome while a retry leaves the inbox",
+    async (outcome) => {
+      const session = await ensureAgentSession(cellId);
+      const failedAt = Date.now() - HISTORICAL_ERROR_OFFSET_MS;
+      clientStub.spies.listSessionMessages.mockResolvedValue({
+        data: [
+          createAssistantErrorMessage(
+            "msg-old-error",
+            { type: "provider.quota", message: "Old failure", status: 429 },
+            [],
+            failedAt
+          ),
+        ],
+        cursor: {},
+      });
+      await sendAgentMessage(session.id, "Retry provider request");
+      mockSessionOutcome(clientStub, outcome, failedAt);
+      clientStub.session.inbox.list.mockResolvedValue([]);
+
+      const retrying = await fetchAgentSession(session.id);
+
+      expect(retrying?.status).toBe("working");
+      expect(retrying?.errorMessage).toBeNull();
+    }
+  );
+
+  it("reports a current failed outcome without a structured message", async () => {
+    const session = await ensureAgentSession(cellId);
+    await sendAgentMessage(session.id, "Trigger provider failure");
+    mockSessionOutcome(
+      clientStub,
+      "failed",
+      Date.now() + HISTORICAL_ERROR_OFFSET_MS
+    );
+    clientStub.session.inbox.list.mockResolvedValue([]);
+    clientStub.spies.listSessionMessages.mockResolvedValue({
+      data: [],
+      cursor: {},
     });
 
     const failed = await fetchAgentSession(session.id);
 
     expect(failed?.status).toBe("error");
-    expect(clientStub.spies.listSessionMessages).not.toHaveBeenCalled();
+  });
+
+  it("lets a successful remote outcome clear an old local error", async () => {
+    const session = await ensureAgentSession(cellId);
+    mockSessionOutcome(clientStub, "failed");
+    clientStub.spies.listSessionMessages.mockResolvedValue({
+      data: [
+        createAssistantErrorMessage("msg-old-error", {
+          type: "provider.quota",
+          message: "Old failure",
+          status: 429,
+        }),
+      ],
+      cursor: {},
+    });
+    expect((await fetchAgentSession(session.id))?.status).toBe("error");
+    mockSessionOutcome(clientStub, "succeeded");
+
+    const succeeded = await fetchAgentSession(session.id);
+
+    expect(succeeded?.status).toBe("awaiting_input");
+    expect(succeeded?.errorMessage).toBeNull();
   });
 
   it("persists resumable working state when a plan question is answered", async () => {
@@ -1504,6 +1658,23 @@ function createHistoryMessage(input: { id: string; role: string }) {
   };
 }
 
+function createAssistantErrorMessage(
+  id: string,
+  error: { type: string; message: string; status?: number },
+  content: Array<{ type: "text"; text: string }> = [],
+  created = Date.now()
+) {
+  return {
+    id,
+    type: "assistant" as const,
+    agent: "plan",
+    model: createModel(TEST_PROVIDER_ID, TEMPLATE_MODEL_ID),
+    time: { created, completed: created },
+    content,
+    error,
+  };
+}
+
 function createModel(providerID: string, id: string) {
   return { providerID, id };
 }
@@ -1536,6 +1707,31 @@ function expectRemoteSessionDelete(clientStub: ClientStub, sessionId: string) {
   // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
   expect(clientStub.session.remove).toHaveBeenCalledWith({
     sessionID: sessionId,
+  });
+}
+
+function expectLatestMessageLookup(clientStub: ClientStub, sessionId: string) {
+  // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
+  expect(clientStub.spies.listSessionMessages).toHaveBeenCalledWith({
+    sessionID: sessionId,
+    limit: 1,
+    order: "desc",
+  });
+}
+
+function mockSessionOutcome(
+  clientStub: ClientStub,
+  outcome: "failed" | "succeeded",
+  updatedAt?: number
+) {
+  const session = createMockSession();
+  clientStub.session.get.mockResolvedValue({
+    ...session,
+    outcome,
+    time: {
+      ...session.time,
+      updated: updatedAt ?? session.time.updated,
+    },
   });
 }
 

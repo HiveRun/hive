@@ -800,7 +800,13 @@ async function* streamAgentEvents(
   const pendingInputIds = new Set(
     pendingInputEvents.map((event) => event.permissionId)
   );
-  yield sse({ event: "status", data: { status: session.status } });
+  yield sse({
+    event: "status",
+    data: {
+      status: session.status,
+      ...(session.errorMessage ? { error: session.errorMessage } : {}),
+    },
+  });
   const initialModeEvent = formatInitialModeSseEvent(session);
   if (initialModeEvent) {
     yield initialModeEvent;

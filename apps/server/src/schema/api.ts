@@ -357,6 +357,7 @@ const AgentMessageSchema = t.Object({
   parentId: t.Optional(t.Union([t.String(), t.Null()])),
   errorName: t.Optional(t.Union([t.String(), t.Null()])),
   errorMessage: t.Optional(t.Union([t.String(), t.Null()])),
+  errorStatus: t.Optional(t.Union([t.Number(), t.Null()])),
 });
 
 export const AgentMessageListResponseSchema = t.Object({

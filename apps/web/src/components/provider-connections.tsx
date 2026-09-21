@@ -9,7 +9,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,12 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/;
+
+function authRefetchInterval(queryStatus: string, attemptStatus?: string) {
+  return queryStatus === "error" || attemptStatus === "pending"
+    ? OAUTH_POLL_INTERVAL_MS
+    : false;
+}
 
 type OAuthAttempt = {
   attemptId: string;
@@ -398,11 +404,13 @@ function selectVisibleIntegrations(
   configuredIntegrationIds: Set<string>
 ) {
   if (!providerId) {
-    return (
+    const visible =
       integrations?.filter(
         (integration) =>
           integration.connected || configuredIntegrationIds.has(integration.id)
-      ) ?? []
+      ) ?? [];
+    return [...visible].sort(
+      (left, right) => Number(right.connected) - Number(left.connected)
     );
   }
   if (!integrationId) {
@@ -530,10 +538,15 @@ function ProviderConnection({
   workspaceId: string;
   onConnected: () => void;
 }) {
+  const [showAuthControls, setShowAuthControls] = useState(
+    !integration.connected
+  );
   const [oauthAttempt, setOAuthAttempt] = useState<OAuthAttempt | null>(null);
   const [commandAttempt, setCommandAttempt] = useState<CommandAttempt | null>(
     null
   );
+  const [oauthStarting, setOAuthStarting] = useState(false);
+  const [commandStarting, setCommandStarting] = useState(false);
   const keyMethod = integration.methods.find((method) => method.type === "key");
   const oauthMethods = integration.methods.filter(
     (method): method is ProviderAuthMethod & { type: "oauth"; id: string } =>
@@ -552,6 +565,15 @@ function ProviderConnection({
     onSubmit: () => keyMutation.mutateAsync(),
   });
   const authForm = useForm({ defaultValues: { code: "" } });
+  const finishConnection = useCallback(() => {
+    toast.success(`${integration.name} connected`);
+    setOAuthAttempt(null);
+    setCommandAttempt(null);
+    setShowAuthControls(false);
+    keyForm.reset();
+    authForm.reset();
+    onConnected();
+  }, [authForm, integration.name, keyForm, onConnected]);
   const keyMutation = useMutation({
     mutationFn: () =>
       providerAuthMutations.connectKey.mutationFn({
@@ -563,11 +585,7 @@ function ProviderConnection({
           keyForm.state.values.answer
         ),
       }),
-    onSuccess: () => {
-      toast.success(`${integration.name} connected`);
-      keyForm.reset();
-      onConnected();
-    },
+    onSuccess: finishConnection,
     onError: (error) => toast.error(error.message),
   });
   const completeOAuthMutation = useMutation({
@@ -582,12 +600,7 @@ function ProviderConnection({
         code: authForm.state.values.code.trim(),
       });
     },
-    onSuccess: () => {
-      toast.success(`${integration.name} connected`);
-      setOAuthAttempt(null);
-      authForm.reset();
-      onConnected();
-    },
+    onSuccess: finishConnection,
     onError: (error) => toast.error(error.message),
   });
   const startCommandMutation = useMutation({
@@ -617,7 +630,7 @@ function ProviderConnection({
     ),
     enabled: Boolean(oauthAttempt),
     refetchInterval: (query) =>
-      query.state.data?.status === "pending" ? OAUTH_POLL_INTERVAL_MS : false,
+      authRefetchInterval(query.state.status, query.state.data?.status),
   });
   const commandStatus = useQuery({
     ...providerAuthQueries.commandStatus(
@@ -627,14 +640,24 @@ function ProviderConnection({
     ),
     enabled: Boolean(commandAttempt),
     refetchInterval: (query) =>
-      query.state.data?.status === "pending" ? OAUTH_POLL_INTERVAL_MS : false,
+      authRefetchInterval(query.state.status, query.state.data?.status),
   });
+
+  const closeAuthControls = () => {
+    keyForm.reset();
+    authForm.reset();
+    setShowAuthControls(false);
+  };
+
+  useEffect(() => {
+    if (integration.connected) {
+      setShowAuthControls(false);
+    }
+  }, [integration.connected]);
 
   useEffect(() => {
     if (oauthStatus.data?.status === "complete") {
-      toast.success(`${integration.name} connected`);
-      setOAuthAttempt(null);
-      onConnected();
+      finishConnection();
     } else if (oauthStatus.data?.status === "failed") {
       toast.error(
         oauthStatus.data.message ?? `${integration.name} authentication failed`
@@ -643,23 +666,12 @@ function ProviderConnection({
     } else if (oauthStatus.data?.status === "expired") {
       toast.error(`${integration.name} authentication expired`);
       setOAuthAttempt(null);
-    } else if (oauthStatus.isError) {
-      toast.error(oauthStatus.error.message);
-      setOAuthAttempt(null);
     }
-  }, [
-    integration.name,
-    oauthStatus.data,
-    oauthStatus.error,
-    oauthStatus.isError,
-    onConnected,
-  ]);
+  }, [integration.name, oauthStatus.data, finishConnection]);
 
   useEffect(() => {
     if (commandStatus.data?.status === "complete") {
-      toast.success(`${integration.name} connected`);
-      setCommandAttempt(null);
-      onConnected();
+      finishConnection();
     } else if (commandStatus.data?.status === "failed") {
       toast.error(
         commandStatus.data.message ?? `${integration.name} connection failed`
@@ -668,19 +680,10 @@ function ProviderConnection({
     } else if (commandStatus.data?.status === "expired") {
       toast.error(`${integration.name} connection expired`);
       setCommandAttempt(null);
-    } else if (commandStatus.isError) {
-      toast.error(commandStatus.error.message);
-      setCommandAttempt(null);
     }
-  }, [
-    commandStatus.data,
-    commandStatus.error,
-    commandStatus.isError,
-    integration.name,
-    onConnected,
-  ]);
+  }, [commandStatus.data, finishConnection, integration.name]);
 
-  if (integration.connected) {
+  if (integration.connected && !showAuthControls) {
     return (
       <div className="flex items-center justify-between gap-3 border-2 border-emerald-500 bg-emerald-500/10 p-4">
         <div className="flex items-center gap-3">
@@ -694,22 +697,35 @@ function ProviderConnection({
             </p>
           </div>
         </div>
-        <Badge variant="outline">Connected</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">Connected</Badge>
+          <Button
+            onClick={() => setShowAuthControls(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Reconnect
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4 border-2 border-amber-500 bg-amber-500/5 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="font-semibold uppercase tracking-[0.08em]">
-            {integration.name}
-          </p>
-          <p className="text-muted-foreground text-xs">Connection required</p>
-        </div>
-        <Badge variant="outline">Offline</Badge>
-      </div>
+      <ProviderConfigurationHeader
+        closeDisabled={Boolean(
+          oauthStarting ||
+            commandStarting ||
+            oauthAttempt ||
+            commandAttempt ||
+            keyMutation.isPending ||
+            startCommandMutation.isPending
+        )}
+        integration={integration}
+        onClose={closeAuthControls}
+      />
 
       {keyMethod ? (
         <div className="space-y-3">
@@ -778,7 +794,13 @@ function ProviderConnection({
 
       {oauthMethods.map((method) => (
         <OAuthMethodForm
-          disabled={Boolean(oauthAttempt || commandAttempt)}
+          disabled={Boolean(
+            oauthStarting ||
+              commandStarting ||
+              oauthAttempt ||
+              commandAttempt ||
+              startCommandMutation.isPending
+          )}
           integrationId={integration.id}
           key={method.id}
           method={method}
@@ -788,6 +810,7 @@ function ProviderConnection({
               integrationId: integration.id,
             })
           }
+          onStartingChange={setOAuthStarting}
           workspaceId={workspaceId}
         />
       ))}
@@ -795,17 +818,24 @@ function ProviderConnection({
       {commandMethods.map((method) => (
         <Button
           disabled={
-            Boolean(oauthAttempt || commandAttempt) ||
+            Boolean(oauthStarting || oauthAttempt || commandAttempt) ||
+            commandStarting ||
             startCommandMutation.isPending
           }
           key={method.id}
-          onClick={() =>
-            startCommandMutation.mutate({
-              workspaceId,
-              integrationId: integration.id,
-              methodId: method.id,
-            })
-          }
+          onClick={() => {
+            setCommandStarting(true);
+            startCommandMutation.mutate(
+              {
+                workspaceId,
+                integrationId: integration.id,
+                methodId: method.id,
+              },
+              {
+                onSettled: () => setCommandStarting(false),
+              }
+            );
+          }}
           type="button"
           variant="outline"
         >
@@ -894,22 +924,64 @@ function ProviderConnection({
   );
 }
 
+function ProviderConfigurationHeader({
+  closeDisabled,
+  integration,
+  onClose,
+}: {
+  closeDisabled: boolean;
+  integration: ProviderAuthIntegration;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <p className="font-semibold uppercase tracking-[0.08em]">
+          {integration.name}
+        </p>
+        <p className="text-muted-foreground text-xs">
+          Choose a connection method
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline">Configure</Badge>
+        {integration.connected ? (
+          <Button
+            disabled={closeDisabled}
+            onClick={onClose}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Close
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function OAuthMethodForm({
   workspaceId,
   integrationId,
   method,
   disabled,
   onStarted,
+  onStartingChange,
 }: {
   workspaceId: string;
   integrationId: string;
   method: ProviderAuthMethod & { type: "oauth"; id: string };
   disabled: boolean;
   onStarted: (attempt: Omit<OAuthAttempt, "integrationId">) => void;
+  onStartingChange: (starting: boolean) => void;
 }) {
   const form = useForm({
     defaultValues: { answer: defaultAnswers(method.fields) },
-    onSubmit: () => mutation.mutateAsync(),
+    onSubmit: async () => {
+      onStartingChange(true);
+      await mutation.mutateAsync().finally(() => onStartingChange(false));
+    },
   });
   const mutation = useMutation({
     mutationFn: () =>

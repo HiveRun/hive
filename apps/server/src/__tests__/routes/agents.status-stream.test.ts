@@ -64,6 +64,20 @@ describe("agent status stream", () => {
     close();
   });
 
+  it("includes an existing error in the initial status", async () => {
+    const { close, readChunk } = await openOkStatusStream({
+      ...TEST_SESSION,
+      status: "error",
+      errorMessage: "Integration.Authorization (401)",
+    });
+
+    const initial = await readChunk();
+    expect(initial).toContain('"status":"error"');
+    expect(initial).toContain('"error":"Integration.Authorization (401)"');
+
+    close();
+  });
+
   it("returns 404 when session cannot be found", async () => {
     vi.spyOn(AgentService, "fetchAgentSession").mockResolvedValue(null);
 
