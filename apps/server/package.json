@@ -20,7 +20,8 @@
     "dev": "bun run --hot src/index.ts",
     "start": "bun run dist/index.js",
     "test": "DATABASE_URL=file::memory:?cache=shared bun test",
-    "test:run": "DATABASE_URL=file::memory:?cache=shared bun test"
+    "test:run": "DATABASE_URL=file::memory:?cache=shared bun test",
+    "test:e2e:backend": "bun test src/__tests__/backend-e2e --timeout 300000"
   },
   "dependencies": {
     "@bogeychan/elysia-logger": "^0.1.10",
