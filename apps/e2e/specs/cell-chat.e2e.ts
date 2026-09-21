@@ -1,12 +1,16 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import {
+  E2E_MODEL_ID,
+  E2E_PROVIDER_ID,
+} from "../src/runtime/fixture-workspace";
+import {
   createApiCellAndOpenChat,
   ensureTerminalReady,
   fetchAgentMessageIds,
-  fetchAgentMessages,
   fetchAgentSession,
   focusTerminalInput,
   requireApiUrl,
+  waitForAgentMessage,
   waitForAgentSession,
   waitForChatRoute,
   waitForCondition,
@@ -21,8 +25,8 @@ const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 const CELL_TEMPLATE_LABEL = "E2E Template";
-const EXPECTED_MODEL_ID = "big-pickle";
-const EXPECTED_MODEL_PROVIDER_ID = "opencode";
+const EXPECTED_MODEL_ID = E2E_MODEL_ID;
+const EXPECTED_MODEL_PROVIDER_ID = E2E_PROVIDER_ID;
 const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 
 test.describe("cell chat flow", () => {
@@ -109,40 +113,30 @@ async function sendMultilinePromptViaKeyboard(options: {
   await options.page.keyboard.type(secondLine, { delay: 25 });
   await options.page.keyboard.press("Enter");
 
-  await waitForUserMessageAccepted({
+  await waitForAgentMessage({
     apiUrl: options.apiUrl,
     baselineMessageIds,
-    sessionId: baselineSession.id,
-    prompt: options.prompt,
-    timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
-  });
-  await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
-}
-
-async function waitForUserMessageAccepted(options: {
-  apiUrl: string;
-  baselineMessageIds: ReadonlySet<string>;
-  sessionId: string;
-  prompt: string;
-  timeoutMs: number;
-}): Promise<void> {
-  await waitForCondition({
-    check: async () => {
-      const messages = await fetchAgentMessages(
-        options.apiUrl,
-        options.sessionId
-      );
-      return messages.some(
-        (message) =>
-          !options.baselineMessageIds.has(message.id) &&
-          message.role === "user" &&
-          Boolean(message.content?.includes(options.prompt))
-      );
-    },
+    cellId: options.cellId,
+    content: options.prompt,
     errorMessage: "Multiline prompt did not create one matching user message",
     intervalMs: 1000,
-    timeoutMs: options.timeoutMs,
+    role: "user",
+    sessionId: baselineSession.id,
+    timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
   });
+  await waitForAgentMessage({
+    apiUrl: options.apiUrl,
+    baselineMessageIds,
+    cellId: options.cellId,
+    content: options.prompt,
+    errorMessage:
+      "Multiline prompt did not produce one matching assistant response",
+    intervalMs: 1000,
+    role: "assistant",
+    sessionId: baselineSession.id,
+    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+  });
+  await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
 }
 
 async function assertSessionModelSelection(options: {

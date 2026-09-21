@@ -22,6 +22,7 @@ import {
   type ModelSelectionSource,
   ModelSelector,
 } from "@/components/model-selector";
+import { ProviderConnections } from "@/components/provider-connections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -265,6 +266,7 @@ export function CellForm({
     defaultValues.templateId
   );
   const [isModelSelectorLoading, setIsModelSelectorLoading] = useState(true);
+  const [connectedProviderId, setConnectedProviderId] = useState<string>();
   const [hasExplicitModelSelection, setHasExplicitModelSelection] =
     useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
@@ -288,6 +290,8 @@ export function CellForm({
     selectedModel?.providerId ??
     templateAgent?.model?.providerId ??
     templateAgent?.providerId;
+  const selectedProviderId = selectedModel?.providerId ?? providerPreference;
+  const providerConnectionReady = connectedProviderId === selectedProviderId;
 
   useEffect(() => {
     const nextSelection = resolveAutoSelectedModel({
@@ -518,6 +522,7 @@ export function CellForm({
     mutation.isPending ||
     isModelSelectorLoading ||
     imageReadsInFlight ||
+    !providerConnectionReady ||
     !hasModelSelection;
 
   if (templatesLoading) {
@@ -766,6 +771,17 @@ export function CellForm({
               cell's agent session starts.
             </p>
           </div>
+
+          {selectedProviderId ? (
+            <ProviderConnections
+              compact
+              onReadyChange={(ready) =>
+                setConnectedProviderId(ready ? selectedProviderId : undefined)
+              }
+              providerId={selectedProviderId}
+              workspaceId={workspaceId}
+            />
+          ) : null}
 
           <form.Field name="startMode">
             {(field) => (

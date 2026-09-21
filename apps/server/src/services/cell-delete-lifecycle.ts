@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 
 import type { DatabaseService as DatabaseServiceType } from "../db";
 import { type Cell, type CellStatus, cells } from "../schema/cells";
-import { resolveCellsRoot } from "../workspaces/registry";
+import { resolveCellRoots } from "../workspaces/registry";
 import {
   type AsyncWorktreeManager,
   describeWorktreeError,
@@ -199,13 +199,12 @@ export async function removeCellWorkspace(
     }
     throw error;
   }
-  const cellsRoot = resolvePath(resolveCellsRoot());
   const workspaceCellsRoot = resolvePath(
     cell.workspaceRootPath,
     ".hive",
     "cells"
   );
-  const allowedCellsRoot = [cellsRoot, workspaceCellsRoot].find(
+  const allowedCellsRoot = [...resolveCellRoots(), workspaceCellsRoot].find(
     (root) => workspacePath === resolvePath(root, cell.id)
   );
   if (!allowedCellsRoot) {

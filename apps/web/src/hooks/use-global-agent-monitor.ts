@@ -47,6 +47,16 @@ type PendingModeTransition = {
   fallbackStatus: string;
 };
 
+type AgentMonitor = {
+  cell: Cell;
+  session: AgentSession;
+  sessionQueryKey: ReturnType<typeof agentQueries.sessionByCell>["queryKey"];
+};
+
+const isAgentMonitor = (
+  monitor: AgentMonitor | null
+): monitor is AgentMonitor => monitor !== null;
+
 const updateSessionQuery = (
   queryClient: ReturnType<typeof useQueryClient>,
   queryKey: ReturnType<typeof agentQueries.sessionByCell>["queryKey"],
@@ -67,18 +77,22 @@ export function useGlobalAgentMonitor() {
         queryKey: ["cells", "unselected"] as const,
         queryFn: async () => [] as Cell[],
       };
-  const { data: cells = [] } = useQuery({
+  const { data: cells = [], isFetched: cellsFetched } = useQuery({
     ...cellsQuery,
     enabled: Boolean(workspaceId),
   });
-  const sessionStreams = useRef<
-    Map<string, { source: EventSource; sessionId: string }>
-  >(new Map());
   const lastStatuses = useRef<Map<string, string>>(new Map());
   const pendingModeTransitions = useRef<Map<string, PendingModeTransition>>(
     new Map()
   );
   const windowFocusedRef = useRef(true);
+  const readyCellsRef = useRef<Cell[]>([]);
+  const cellsFetchedRef = useRef(false);
+  const reloadMonitorsRef = useRef<(() => void) | null>(null);
+  const clearMonitorsRef = useRef<((waitForCells: boolean) => void) | null>(
+    null
+  );
+  const monitoredWorkspaceIdRef = useRef<string | undefined>(undefined);
 
   const cancelPendingModeTransition = useCallback((sessionId: string) => {
     const pendingTransition = pendingModeTransitions.current.get(sessionId);
@@ -89,9 +103,30 @@ export function useGlobalAgentMonitor() {
   }, []);
 
   useEffect(() => {
+    const workspaceChanged = monitoredWorkspaceIdRef.current !== workspaceId;
+    monitoredWorkspaceIdRef.current = workspaceId;
+    cellsFetchedRef.current = cellsFetched;
+    readyCellsRef.current = (cells ?? []).filter(
+      (cell) => cell.status === "ready"
+    );
+    if (workspaceChanged) {
+      clearMonitorsRef.current?.(Boolean(workspaceId));
+    }
+    reloadMonitorsRef.current?.();
+  }, [cells, cellsFetched, workspaceId]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
+
+    let isActive = true;
+    let streamConnected = false;
+    let monitorLoadVersion = 0;
+    let eventSource: EventSource | null = null;
+    let monitorsReady = false;
+    const monitors = new Map<string, AgentMonitor>();
+    const pendingEvents: Array<() => void> = [];
 
     // Track whether the window is in focus so we can decide between desktop
     // notifications (when unfocused) and toast notifications (when focused).
@@ -109,9 +144,6 @@ export function useGlobalAgentMonitor() {
     window.addEventListener("focus", handleFocus);
     window.addEventListener("blur", handleBlur);
     window.addEventListener("visibilitychange", handleVisibilityChange);
-
-    const readyCells = (cells ?? []).filter((cell) => cell.status === "ready");
-    const readyIds = new Set(readyCells.map((cell) => cell.id));
 
     const scheduleModeTransitionReset = (
       sessionId: string,
@@ -164,171 +196,209 @@ export function useGlobalAgentMonitor() {
       pendingModeTransitions.current.delete(sessionId);
     };
 
-    for (const [cellId, stream] of sessionStreams.current.entries()) {
-      if (!readyIds.has(cellId)) {
-        stream.source.close();
-        sessionStreams.current.delete(cellId);
-        lastStatuses.current.delete(stream.sessionId);
-        restorePendingModeTransition(stream.sessionId);
-      }
-    }
-
-    const startMonitor = async (cell: Cell) => {
+    const loadMonitor = async (cell: Cell): Promise<AgentMonitor | null> => {
       const sessionQuery = agentQueries.sessionByCell(cell.id);
-
       try {
-        const session = await queryClient.ensureQueryData(sessionQuery);
-        if (!session?.id) {
-          return;
-        }
-
-        const currentStream = sessionStreams.current.get(cell.id);
-        if (currentStream) {
-          if (currentStream.sessionId === session.id) {
-            return;
-          }
-          currentStream.source.close();
-          restorePendingModeTransition(currentStream.sessionId);
-          sessionStreams.current.delete(cell.id);
-        }
-
-        const eventSource = new EventSource(
-          `${API_BASE}/api/agents/sessions/${session.id}/events`
-        );
-        sessionStreams.current.set(cell.id, {
-          source: eventSource,
-          sessionId: session.id,
+        const session = await queryClient.fetchQuery({
+          ...sessionQuery,
+          staleTime: 0,
         });
-
-        const handleStatus = (event: MessageEvent<string>) => {
-          try {
-            const payload = JSON.parse(event.data) as {
-              status: string;
-              error?: string;
-            };
-
-            updateSessionQuery(
-              queryClient,
-              sessionQuery.queryKey,
-              (previous) => ({ ...previous, status: payload.status })
-            );
-
-            cancelPendingModeTransition(session.id);
-
-            const previousStatus = lastStatuses.current.get(session.id);
-            lastStatuses.current.set(session.id, payload.status);
-
-            if (
-              payload.status === "awaiting_input" &&
-              previousStatus !== "awaiting_input"
-            ) {
-              dispatchAwaitingInputNotification({
-                cell,
-                isWindowFocused: windowFocusedRef.current,
-              });
-            }
-          } catch {
-            // ignore malformed events
-          }
-        };
-
-        const handleMode = (event: MessageEvent<string>) => {
-          try {
-            const payload = JSON.parse(event.data) as ModeEventPayload;
-
-            let fallbackStatus = "working";
-            let isPlanToBuildTransition = false;
-
-            updateSessionQuery(
-              queryClient,
-              sessionQuery.queryKey,
-              (previous) => {
-                const next = resolveModeSessionUpdate(previous, payload);
-                isPlanToBuildTransition = next.isPlanToBuildTransition;
-                fallbackStatus = next.fallbackStatus;
-                return next.nextSession;
-              }
-            );
-
-            if (isPlanToBuildTransition) {
-              scheduleModeTransitionReset(
-                session.id,
-                sessionQuery.queryKey,
-                fallbackStatus
-              );
-              return;
-            }
-
-            restorePendingModeTransition(session.id);
-          } catch {
-            // ignore malformed events
-          }
-        };
-
-        const handleInputRequired = (_event: MessageEvent<string>) => {
-          queryClient.setQueryData(
-            sessionQuery.queryKey,
-            (previous: AgentSession | null) => {
-              if (!previous) {
-                return previous;
-              }
-
-              return {
-                ...previous,
-                status: "awaiting_input",
-              };
-            }
-          );
-
-          cancelPendingModeTransition(session.id);
-
-          const previousStatus = lastStatuses.current.get(session.id);
-          lastStatuses.current.set(session.id, "awaiting_input");
-          if (previousStatus !== "awaiting_input") {
-            dispatchAwaitingInputNotification({
-              cell,
-              isWindowFocused: windowFocusedRef.current,
-            });
-          }
-        };
-
-        eventSource.addEventListener("status", handleStatus);
-        eventSource.addEventListener("mode", handleMode);
-        eventSource.addEventListener("input_required", handleInputRequired);
-        eventSource.onerror = () => {
-          eventSource.close();
-          sessionStreams.current.delete(cell.id);
-          lastStatuses.current.delete(session.id);
-          restorePendingModeTransition(session.id);
-        };
+        return session?.id
+          ? { cell, session, sessionQueryKey: sessionQuery.queryKey }
+          : null;
       } catch {
-        // ignore session fetch errors
+        const session = queryClient.getQueryData<AgentSession>(
+          sessionQuery.queryKey
+        );
+        return session?.id
+          ? { cell, session, sessionQueryKey: sessionQuery.queryKey }
+          : null;
       }
     };
 
-    for (const cell of readyCells) {
-      const existingStream = sessionStreams.current.get(cell.id);
-      if (existingStream?.sessionId) {
-        continue;
+    const recordStatus = (monitor: AgentMonitor, status: string) => {
+      const previousStatus = lastStatuses.current.get(monitor.session.id);
+      lastStatuses.current.set(monitor.session.id, status);
+      if (status === "awaiting_input" && previousStatus !== "awaiting_input") {
+        dispatchAwaitingInputNotification({
+          cell: monitor.cell,
+          isWindowFocused: windowFocusedRef.current,
+        });
       }
-      startMonitor(cell);
-    }
+    };
+
+    const updateMonitorStatus = (
+      sessionId: string,
+      status: string,
+      error?: string
+    ) => {
+      const monitor = monitors.get(sessionId);
+      if (!monitor) {
+        return;
+      }
+      updateSessionQuery(queryClient, monitor.sessionQueryKey, (previous) => ({
+        ...previous,
+        status,
+        errorMessage: error ?? null,
+      }));
+      cancelPendingModeTransition(sessionId);
+      recordStatus(monitor, status);
+    };
+
+    const handleStatus = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          sessionId: string;
+          status: string;
+          error?: string;
+        };
+        updateMonitorStatus(payload.sessionId, payload.status, payload.error);
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    const handleMode = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as ModeEventPayload & {
+          sessionId: string;
+        };
+        const monitor = monitors.get(payload.sessionId);
+        if (!monitor) {
+          return;
+        }
+
+        let fallbackStatus = "working";
+        let isPlanToBuildTransition = false;
+        updateSessionQuery(queryClient, monitor.sessionQueryKey, (previous) => {
+          const next = resolveModeSessionUpdate(previous, payload);
+          isPlanToBuildTransition = next.isPlanToBuildTransition;
+          fallbackStatus = next.fallbackStatus;
+          return next.nextSession;
+        });
+
+        if (isPlanToBuildTransition) {
+          scheduleModeTransitionReset(
+            payload.sessionId,
+            monitor.sessionQueryKey,
+            fallbackStatus
+          );
+          return;
+        }
+        restorePendingModeTransition(payload.sessionId);
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    const handleInputRequired = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as { sessionId: string };
+        updateMonitorStatus(payload.sessionId, "awaiting_input");
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    const registerMonitor = (
+      monitor: AgentMonitor,
+      removedSessionIds: Set<string>
+    ) => {
+      removedSessionIds.delete(monitor.session.id);
+      monitors.set(monitor.session.id, monitor);
+      recordStatus(monitor, monitor.session.status);
+    };
+
+    const replaceMonitors = (resolvedMonitors: (AgentMonitor | null)[]) => {
+      const removedSessionIds = new Set(monitors.keys());
+      monitors.clear();
+      for (const monitor of resolvedMonitors.filter(isAgentMonitor)) {
+        registerMonitor(monitor, removedSessionIds);
+      }
+      for (const sessionId of removedSessionIds) {
+        lastStatuses.current.delete(sessionId);
+        restorePendingModeTransition(sessionId);
+      }
+
+      monitorsReady = true;
+      for (const applyEvent of pendingEvents.splice(0)) {
+        applyEvent();
+      }
+    };
+
+    const loadMonitors = async () => {
+      const loadVersion = ++monitorLoadVersion;
+      monitorsReady = false;
+      const readyCells = readyCellsRef.current;
+      const resolvedMonitors = await Promise.all(readyCells.map(loadMonitor));
+      if (!isActive || loadVersion !== monitorLoadVersion) {
+        return;
+      }
+      replaceMonitors(resolvedMonitors);
+    };
+
+    const applyWhenMonitorsReady = (applyEvent: () => void) => {
+      if (monitorsReady) {
+        applyEvent();
+        return;
+      }
+      pendingEvents.push(applyEvent);
+    };
+
+    reloadMonitorsRef.current = () => {
+      if (streamConnected && cellsFetchedRef.current) {
+        loadMonitors().catch(() => {
+          /* individual session fetch errors are ignored */
+        });
+      }
+    };
+    clearMonitorsRef.current = (waitForCells) => {
+      monitorLoadVersion += 1;
+      monitorsReady = !waitForCells;
+      pendingEvents.splice(0);
+      for (const sessionId of monitors.keys()) {
+        lastStatuses.current.delete(sessionId);
+        restorePendingModeTransition(sessionId);
+      }
+      monitors.clear();
+    };
+
+    eventSource = new EventSource(`${API_BASE}/api/agents/events`);
+    eventSource.addEventListener("ready", () => {
+      streamConnected = true;
+      reloadMonitorsRef.current?.();
+    });
+    eventSource.addEventListener("status", (event) => {
+      applyWhenMonitorsReady(() => handleStatus(event));
+    });
+    eventSource.addEventListener("mode", (event) => {
+      applyWhenMonitorsReady(() => handleMode(event));
+    });
+    eventSource.addEventListener("input_required", (event) => {
+      applyWhenMonitorsReady(() => handleInputRequired(event));
+    });
+    eventSource.onerror = () => {
+      streamConnected = false;
+      monitorsReady = false;
+      for (const sessionId of monitors.keys()) {
+        restorePendingModeTransition(sessionId);
+      }
+    };
 
     return () => {
+      isActive = false;
+      reloadMonitorsRef.current = null;
+      clearMonitorsRef.current = null;
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("visibilitychange", handleVisibilityChange);
-
-      for (const stream of sessionStreams.current.values()) {
-        stream.source.close();
-      }
-      sessionStreams.current.clear();
+      eventSource?.close();
       lastStatuses.current.clear();
       for (const sessionId of pendingModeTransitions.current.keys()) {
         restorePendingModeTransition(sessionId);
       }
     };
-  }, [cancelPendingModeTransition, cells, queryClient]);
+  }, [cancelPendingModeTransition, queryClient]);
 }
 
 type AwaitingInputNotificationOptions = {

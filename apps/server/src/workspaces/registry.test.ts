@@ -6,6 +6,7 @@ import {
   activateWorkspace,
   ensureWorkspaceRegistered,
   getWorkspaceRegistry,
+  isCellWorkspacePath,
   listWorkspaces,
   registerWorkspace,
   removeWorkspace,
@@ -33,6 +34,18 @@ describe("workspace registry", () => {
     const testHome = hiveHome;
     await rm(testHome, { recursive: true, force: true });
     process.env.HIVE_HOME = undefined;
+    process.env.HIVE_CELLS_ROOT = undefined;
+  });
+
+  test("uses an explicit cells root while recognizing the legacy root", () => {
+    const cellsRoot = join(hiveHome, "external-cells");
+    process.env.HIVE_CELLS_ROOT = cellsRoot;
+
+    expect(resolveCellsRoot()).toBe(cellsRoot);
+    expect(isCellWorkspacePath(join(cellsRoot, "new-cell"))).toBe(true);
+    expect(isCellWorkspacePath(join(hiveHome, "cells", "legacy-cell"))).toBe(
+      true
+    );
   });
 
   test("registerWorkspace adds a new workspace and lists it", async () => {

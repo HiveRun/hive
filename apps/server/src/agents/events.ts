@@ -1,22 +1,32 @@
 import type { AgentStreamEvent } from "./types";
 
 const subscribers = new Map<string, Set<(event: AgentStreamEvent) => void>>();
+const globalSubscribers = new Set<
+  (sessionId: string, event: AgentStreamEvent) => void
+>();
 
 export function publishAgentEvent(
   sessionId: string,
   event: AgentStreamEvent
 ): void {
   const sessionSubscribers = subscribers.get(sessionId);
-  if (!sessionSubscribers?.size) {
-    return;
+  if (sessionSubscribers) {
+    for (const handler of sessionSubscribers) {
+      try {
+        handler(event);
+      } catch (error) {
+        // biome-ignore lint/suspicious/noConsole: fallback logging until structured logger is wired up.
+        console.error("Failed to publish agent event", error);
+      }
+    }
   }
 
-  for (const handler of sessionSubscribers) {
+  for (const handler of globalSubscribers) {
     try {
-      handler(event);
+      handler(sessionId, event);
     } catch (error) {
       // biome-ignore lint/suspicious/noConsole: fallback logging until structured logger is wired up.
-      console.error("Failed to publish agent event", error);
+      console.error("Failed to publish global agent event", error);
     }
   }
 }
@@ -40,4 +50,11 @@ export function subscribeAgentEvents(
       subscribers.delete(sessionId);
     }
   };
+}
+
+export function subscribeAllAgentEvents(
+  handler: (sessionId: string, event: AgentStreamEvent) => void
+): () => void {
+  globalSubscribers.add(handler);
+  return () => globalSubscribers.delete(handler);
 }

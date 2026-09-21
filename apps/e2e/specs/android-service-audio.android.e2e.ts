@@ -27,6 +27,7 @@ import {
   parseAttachedAndroidDevices,
 } from "../../../packages/android-runtime/src/android-device";
 import { readAndroidRuntimeLeaseForCell } from "../../../packages/android-runtime/src/lease";
+import { throwRunAndCleanupErrors } from "../src/runtime/errors";
 import {
   createCellViaApi,
   fetchWorkspaceCells,
@@ -399,18 +400,11 @@ async function runWithGuaranteedCleanup(
   } catch (error) {
     cleanupError = error;
   }
-  if (runError && cleanupError) {
-    throw new AggregateError(
-      [runError, cleanupError],
-      "Android E2E failed and cleanup did not complete."
-    );
-  }
-  if (runError) {
-    throw runError;
-  }
-  if (cleanupError) {
-    throw cleanupError;
-  }
+  throwRunAndCleanupErrors(
+    runError,
+    cleanupError,
+    "Android E2E failed and cleanup did not complete."
+  );
 }
 
 async function runConcurrentAndroidIsolation(options: {

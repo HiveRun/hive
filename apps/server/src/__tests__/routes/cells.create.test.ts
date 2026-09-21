@@ -13,7 +13,6 @@ import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
 import { cellTimingEvents } from "../../schema/timing-events";
 import { ensureCellEnvironment } from "../../services/cell-environment";
-import type { ServiceSupervisorError } from "../../services/supervisor";
 import {
   CommandExecutionError,
   TemplateSetupError,
@@ -365,10 +364,7 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
           return options.ensureServicesForCell(_args);
         }
         if (options.setupError) {
-          throw {
-            _tag: "ServiceSupervisorError",
-            cause: options.setupError,
-          } as ServiceSupervisorError;
+          throw options.setupError;
         }
         return Promise.resolve();
       },

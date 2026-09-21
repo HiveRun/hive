@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 import {
   createRunningServicesCell,
   fileExists,
+  isPidAlive,
   requireApiUrl,
   requireCellPaths,
   waitForCondition,
@@ -91,21 +92,3 @@ test.describe("cell deletion cleanup", () => {
     );
   });
 });
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-}

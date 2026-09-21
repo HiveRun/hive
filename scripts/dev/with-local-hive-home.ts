@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
-import { resolveDefaultDevHiveHome } from "./local-hive-home";
+import {
+  resolveDefaultDevCellsRoot,
+  resolveDefaultDevHiveHome,
+} from "./local-hive-home";
 
 const [, , ...rawArgs] = process.argv;
 const command = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
@@ -13,11 +16,17 @@ if (command.length === 0) {
 
 const hiveHome =
   process.env.HIVE_HOME ?? resolveDefaultDevHiveHome(process.cwd());
+const cellsRoot =
+  process.env.HIVE_CELLS_ROOT ??
+  (process.env.HIVE_HOME
+    ? undefined
+    : resolveDefaultDevCellsRoot(process.cwd(), process.env.XDG_STATE_HOME));
 
 const child = spawn(command[0] ?? "", command.slice(1), {
   cwd: process.cwd(),
   env: {
     ...process.env,
+    ...(cellsRoot ? { HIVE_CELLS_ROOT: cellsRoot } : {}),
     HIVE_HOME: hiveHome,
   },
   stdio: "inherit",

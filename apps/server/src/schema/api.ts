@@ -333,6 +333,7 @@ const AgentSessionSchema = t.Object({
   templateId: t.String(),
   provider: t.Optional(t.String()),
   status: t.String(),
+  errorMessage: t.Optional(t.Union([t.String(), t.Null()])),
   workspacePath: t.String(),
   createdAt: t.String(),
   updatedAt: t.String(),
@@ -356,6 +357,7 @@ const AgentMessageSchema = t.Object({
   parentId: t.Optional(t.Union([t.String(), t.Null()])),
   errorName: t.Optional(t.Union([t.String(), t.Null()])),
   errorMessage: t.Optional(t.Union([t.String(), t.Null()])),
+  errorStatus: t.Optional(t.Union([t.Number(), t.Null()])),
 });
 
 export const AgentMessageListResponseSchema = t.Object({

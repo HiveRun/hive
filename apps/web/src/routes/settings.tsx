@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   AudioLines,
@@ -7,7 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-
+import { ProviderConnections } from "@/components/provider-connections";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -27,6 +28,7 @@ import {
   setPreferredAudioInput,
   usePreferredAudioInput,
 } from "@/lib/audio-input";
+import { workspaceQueries } from "@/queries/workspaces";
 
 export const Route = createFileRoute("/settings")({
   component: SettingsRoute,
@@ -63,6 +65,7 @@ function classifyAudioInputs(devices: MediaDeviceInfo[]) {
 }
 
 function SettingsRoute() {
+  const workspacesQuery = useQuery(workspaceQueries.list());
   const preferredAudioInput = usePreferredAudioInput();
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [ambiguousAudioInputLabels, setAmbiguousAudioInputLabels] = useState<
@@ -149,6 +152,48 @@ function SettingsRoute() {
     preferredAudioInput && ambiguousAudioInputLabels.has(preferredAudioInput)
   );
   const labelsAreVisible = audioInputs.length > 0;
+  const activeWorkspace =
+    workspacesQuery.data?.workspaces.find(
+      (workspace) => workspace.id === workspacesQuery.data?.activeWorkspaceId
+    ) ?? workspacesQuery.data?.workspaces[0];
+  const providerConnectionsContent = (() => {
+    if (workspacesQuery.isPending) {
+      return (
+        <div className={STATUS_PANEL_CLASSES.neutral}>
+          <Loader2 className="size-5 animate-spin" />
+          Loading workspace connections
+        </div>
+      );
+    }
+    if (workspacesQuery.isError) {
+      return (
+        <div className={`${STATUS_PANEL_CLASSES.error} justify-between`}>
+          <span className="flex items-center gap-3">
+            <CircleAlert className="size-5" />
+            {workspacesQuery.error.message}
+          </span>
+          <Button
+            onClick={() => workspacesQuery.refetch()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <RefreshCw className="size-4" />
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (activeWorkspace) {
+      return <ProviderConnections workspaceId={activeWorkspace.id} />;
+    }
+    return (
+      <div className={STATUS_PANEL_CLASSES.neutral}>
+        <CircleAlert className="size-5" />
+        Register a workspace before connecting model providers.
+      </div>
+    );
+  })();
 
   return (
     <main className="h-full overflow-y-auto p-4 sm:p-6 lg:p-10">
@@ -161,9 +206,32 @@ function SettingsRoute() {
             Settings
           </h1>
           <p className="mt-2 max-w-2xl text-muted-foreground text-sm">
-            Configure browser capabilities shared with cell viewers.
+            Configure provider connections and browser capabilities shared with
+            cells.
           </p>
         </header>
+
+        <Card className="rounded-none border-2 shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
+          <CardHeader className="border-border border-b">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center border-2 border-primary bg-primary/10 text-primary">
+                <CircleCheck className="size-5" />
+              </div>
+              <div className="space-y-1">
+                <CardTitle className="uppercase tracking-[0.08em]">
+                  Model provider connections
+                </CardTitle>
+                <CardDescription>
+                  Credentials are stored by OpenCode 2 and shared with its CLI.
+                  Hive never reads credential values back.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6">
+            {providerConnectionsContent}
+          </CardContent>
+        </Card>
 
         <Card className="rounded-none border-2 shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
           <CardHeader className="border-border border-b">

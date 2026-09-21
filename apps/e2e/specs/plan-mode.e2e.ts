@@ -170,5 +170,5 @@ async function sendTerminalModeInput(page: Page): Promise<void> {
     timeoutMs: TERMINAL_READY_TIMEOUT_MS,
   });
   await focusTerminalInput(page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
 }

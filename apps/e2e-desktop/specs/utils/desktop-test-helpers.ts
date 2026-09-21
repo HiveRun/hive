@@ -21,12 +21,14 @@ export function resolveDesktopApiUrl(message: string) {
 
 export async function createDesktopCell(options: {
   apiUrl: string;
+  description?: string;
   name: string;
   templateId?: string;
 }) {
   const workspaceId = await resolveDesktopWorkspaceId(options.apiUrl);
   return createCellViaApi({
     apiUrl: options.apiUrl,
+    description: options.description,
     name: options.name,
     templateId: options.templateId,
     workspaceId,

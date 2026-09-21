@@ -1,67 +1,30 @@
-import type { UseQueryOptions } from "@tanstack/react-query";
 import { rpc } from "@/lib/rpc";
 
-type AvailableModelVariant = {
-  id: string;
-};
+type ModelListResult = Awaited<ReturnType<typeof rpc.api.agents.models.get>>;
 
-export type AvailableModel = {
-  id: string;
-  name: string;
-  provider: string;
-  variants: AvailableModelVariant[];
-};
+export type ModelListResponse = NonNullable<ModelListResult["data"]>;
+export type AvailableModel = ModelListResponse["models"][number];
 
-type ProviderInfo = {
-  id: string;
-  name?: string;
-};
-
-export type ModelListResponse = {
-  models: AvailableModel[];
-  defaults: Record<string, string>;
-  stickyVariants: Record<string, string>;
-  providers: ProviderInfo[];
-};
-
-type ModelsQueryOptions = UseQueryOptions<
-  ModelListResponse,
-  Error,
-  ModelListResponse
->;
-
-type ModelsRequest = () => Promise<{ data: unknown; error: unknown }>;
-
-const emptyModelList = (): ModelListResponse => ({
-  models: [],
-  defaults: {},
-  stickyVariants: {},
-  providers: [],
-});
-
-const fetchModelList = async (request: ModelsRequest) => {
-  const { data, error } = await request();
+const modelListFromResponse = ({ data, error }: ModelListResult) => {
   if (error) {
     throw new Error("Failed to fetch models");
   }
-  return (data as ModelListResponse | undefined) ?? emptyModelList();
+  return data;
 };
 
 export const modelQueries = {
-  bySession: (sessionId: string): ModelsQueryOptions => ({
+  bySession: (sessionId: string) => ({
     queryKey: ["models", sessionId] as const,
-    queryFn: () =>
-      fetchModelList(() =>
-        rpc.api.agents.sessions({ id: sessionId }).models.get()
+    queryFn: async () =>
+      modelListFromResponse(
+        await rpc.api.agents.sessions({ id: sessionId }).models.get()
       ),
   }),
-  byWorkspace: (workspaceId: string): ModelsQueryOptions => ({
+  byWorkspace: (workspaceId: string) => ({
     queryKey: ["models", "workspace", workspaceId] as const,
-    queryFn: () =>
-      fetchModelList(() =>
-        rpc.api.agents.models.get({
-          query: { workspaceId },
-        })
+    queryFn: async () =>
+      modelListFromResponse(
+        await rpc.api.agents.models.get({ query: { workspaceId } })
       ),
   }),
 };

@@ -14,6 +14,10 @@ import {
   installMediaPermissionHandlers,
   type MediaPermissionController,
 } from "./media-permissions";
+import {
+  hasDesktopReadyToken,
+  resolveProtectedDesktopOrigins,
+} from "./response-guard";
 import { createDesktopStartupController } from "./startup-controller";
 
 const DEFAULT_WINDOW_WIDTH = 1400;
@@ -89,6 +93,36 @@ const requestMicrophoneAccess = async (origin: string) => {
 
 type IpcRegistry = ReturnType<typeof registerIpcHandlers>;
 
+const installDesktopResponseGuard = (
+  window: BrowserWindow,
+  rendererUrl: string
+) => {
+  const readyToken = process.env.HIVE_DESKTOP_READY_TOKEN;
+  const backendUrl = process.env.HIVE_DESKTOP_BACKEND_URL;
+  if (!(readyToken && backendUrl && rendererUrl.startsWith("http:"))) {
+    return false;
+  }
+
+  const protectedOrigins = resolveProtectedDesktopOrigins(
+    rendererUrl,
+    backendUrl
+  );
+  const urls = [...protectedOrigins].map((origin) => `${origin}/*`);
+  window.webContents.session.webRequest.onHeadersReceived(
+    { urls },
+    (details, callback) => {
+      const belongsToWindow = details.webContentsId === window.webContents.id;
+      const origin = new URL(details.url).origin;
+      const cancel =
+        belongsToWindow &&
+        protectedOrigins.has(origin) &&
+        !hasDesktopReadyToken(details.responseHeaders, readyToken);
+      callback({ cancel });
+    }
+  );
+  return true;
+};
+
 const createMainWindow = async (
   ipcRegistry: IpcRegistry,
   mediaPermissions: MediaPermissionController
@@ -115,6 +149,10 @@ const createMainWindow = async (
   }
   const rendererUrl = desktopUrl ?? pathToFileURL(rendererEntry as string).href;
 
+  const guardsDesktopResponses = installDesktopResponseGuard(
+    window,
+    rendererUrl
+  );
   mediaPermissions.registerTrustedRenderer(window.webContents, rendererUrl);
   const guardNavigation = (
     event: { preventDefault: () => void },
@@ -145,6 +183,9 @@ const createMainWindow = async (
     ipcRegistry.detachWindow(window);
   });
 
+  if (guardsDesktopResponses) {
+    await window.webContents.session.clearCache();
+  }
   await window.loadURL(rendererUrl);
   return window;
 };

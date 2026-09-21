@@ -390,12 +390,9 @@ describe("cells route reachability", () => {
     });
   });
 
-  it("reports the cause of wrapped supervisor failures", async () => {
+  it("reports native supervisor failures", async () => {
     const response = await requestFailingServiceAction({
-      error: {
-        _tag: "ServiceSupervisorError",
-        cause: new Error("readiness check timed out"),
-      },
+      error: new Error("readiness check timed out"),
       path: `/api/cells/${TEST_CELL_ID}/services/start`,
     });
 

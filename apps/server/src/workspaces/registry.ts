@@ -7,6 +7,7 @@ import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "../config/files";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
+const HIVE_CELLS_ROOT_ENV = "HIVE_CELLS_ROOT";
 const REGISTRY_VERSION = 1;
 const LOG_WORKSPACE_REGISTRY_DEBUG =
   process.env.HIVE_DEBUG_WORKSPACE_REGISTRY === "1";
@@ -55,16 +56,30 @@ export function resolveHiveHome(): string {
 }
 
 export function resolveCellsRoot(): string {
-  return join(resolveHiveHome(), "cells");
+  return process.env[HIVE_CELLS_ROOT_ENV] || resolveLegacyCellsRoot();
+}
+
+export function resolveCellRoots(): string[] {
+  return Array.from(
+    new Set(
+      [resolveCellsRoot(), resolveLegacyCellsRoot()].map((path) =>
+        resolve(path)
+      )
+    )
+  );
 }
 
 export function isCellWorkspacePath(path: string): boolean {
-  const cellsRoot = resolve(resolveCellsRoot());
   const normalizedPath = resolve(path);
-  return (
-    normalizedPath === cellsRoot ||
-    normalizedPath.startsWith(`${cellsRoot}${sep}`)
+  return resolveCellRoots().some(
+    (cellsRoot) =>
+      normalizedPath === cellsRoot ||
+      normalizedPath.startsWith(`${cellsRoot}${sep}`)
   );
+}
+
+function resolveLegacyCellsRoot(): string {
+  return join(resolveHiveHome(), "cells");
 }
 
 function resolveRegistryPath(): string {

@@ -207,6 +207,10 @@ export async function startProcessWithRetries(options: {
 }
 
 export function readProcessTable(): ProcessEntry[] {
+  if (process.platform === "win32") {
+    return readWindowsProcessTable();
+  }
+
   let output = "";
   try {
     output = execFileSync("ps", ["-eo", "pid,args"], {
@@ -240,29 +244,30 @@ export function readProcessTable(): ProcessEntry[] {
   return entries;
 }
 
-export async function terminateProcessIds(
-  pids: number[],
-  options: { terminateWaitMs: number }
-): Promise<number> {
-  const uniquePids = [...new Set(pids)].filter((pid) => Number.isFinite(pid));
-  if (uniquePids.length === 0) {
-    return 0;
+function readWindowsProcessTable(): ProcessEntry[] {
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+      ],
+      { encoding: "utf8" }
+    );
+    const parsed = JSON.parse(output) as
+      | { CommandLine?: unknown; ProcessId?: unknown }
+      | Array<{ CommandLine?: unknown; ProcessId?: unknown }>;
+    return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) =>
+      typeof entry.ProcessId === "number" &&
+      typeof entry.CommandLine === "string"
+        ? [{ args: entry.CommandLine, pid: entry.ProcessId }]
+        : []
+    );
+  } catch {
+    return [];
   }
-
-  for (const pid of uniquePids) {
-    sendSignalSafe(pid, "SIGTERM");
-  }
-
-  await wait(options.terminateWaitMs);
-
-  const stillRunning = new Set(readProcessTable().map((entry) => entry.pid));
-  const remaining = uniquePids.filter((pid) => stillRunning.has(pid));
-
-  for (const pid of remaining) {
-    sendSignalSafe(pid, "SIGKILL");
-  }
-
-  return uniquePids.length;
 }
 
 async function runCommandInternal(
@@ -345,16 +350,6 @@ function sendManagedProcessSignal(
 
   try {
     child.kill(signal);
-  } catch (error) {
-    if (!isMissingProcessError(error)) {
-      throw error;
-    }
-  }
-}
-
-function sendSignalSafe(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(pid, signal);
   } catch (error) {
     if (!isMissingProcessError(error)) {
       throw error;

@@ -1,4 +1,5 @@
 import type { HiveConfig } from "../../apps/server/src/config/schema";
+import { DEFAULT_READY_TIMEOUT_MS } from "../../apps/server/src/config/service-graph";
 
 const defaultIgnorePatterns = [
   "node_modules/**",
@@ -48,7 +49,7 @@ export const hiveConfigDefaults: HiveConfig = {
           readiness: {
             checks: [{ type: "http", port: "default", path: "/" }],
           },
-          readyTimeoutMs: 3000,
+          readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
         },
         server: {
           type: "process",
@@ -57,7 +58,7 @@ export const hiveConfigDefaults: HiveConfig = {
           readiness: {
             checks: [{ type: "http", port: "default", path: "/" }],
           },
-          readyTimeoutMs: 5000,
+          readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
           env: {
             DATABASE_URL: "local.db",
             CORS_ORIGIN:
@@ -80,7 +81,7 @@ export const hiveConfigDefaults: HiveConfig = {
           env: {
             NODE_ENV: "development",
           },
-          readyTimeoutMs: 5000,
+          readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
         },
       },
     },

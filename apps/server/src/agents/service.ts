@@ -1,17 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
-  AssistantMessage,
-  Event,
-  FilePartInput,
-  Message,
-  OpencodeClient,
-  Part,
-  Session,
-  TextPartInput,
-} from "@opencode-ai/sdk";
-import { eq, inArray } from "drizzle-orm";
+  ModelInfo,
+  OpenCodeClient,
+  ProviderInfo,
+  SessionInfo,
+  SessionMessageInfo,
+  V2Event,
+} from "@opencode-ai/client";
+import { isSessionNotFoundError } from "@opencode-ai/client";
+import { eq, inArray, isNotNull } from "drizzle-orm";
 import { loadHiveConfig } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
@@ -23,30 +22,35 @@ import { resolveCellEnvironment } from "../services/cell-environment";
 import { requireCellAvailableForRuntime } from "../services/cell-runtime-guard";
 import { publishAgentEvent } from "./events";
 import {
-  loadEffectiveOpencodeDefaults,
-  loadOpencodeConfig,
-} from "./opencode-config";
+  ensureHiveOpencodePlugin,
+  ensureHiveToolConfig,
+  resolveHiveServerUrl,
+} from "./hive-opencode-tool";
+import { loadEffectiveOpencodeDefaults } from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
-import { normalizeProviderDefaults } from "./provider-defaults";
+import { assertProviderConnected } from "./provider-auth";
 import type {
+  AgentMessagePart,
   AgentMessageRecord,
+  AgentMessageRole,
   AgentMessageState,
   AgentMode,
   AgentSessionRecord,
   AgentSessionStatus,
+  AgentStreamEvent,
 } from "./types";
-
-const AUTH_PATH = join(homedir(), ".local", "share", "opencode", "auth.json");
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
 const cellSessionMap = new Map<string, string>();
+const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
+const HIVE_PLUGIN_READY_POLL_INTERVAL_MS = 100;
+const HIVE_PLUGIN_READY_TIMEOUT_MS = 15_000;
+const PROVIDER_CATALOG_READY_POLL_INTERVAL_MS = 100;
+const PROVIDER_CATALOG_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 const HIVE_INSTRUCTIONS_RELATIVE_PATH = ".hive/instructions.md";
-
-type DirectoryQuery = {
-  directory?: string;
-};
+const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
 
 type HiveSessionInstructionsService = Pick<
   CellService,
@@ -272,12 +276,14 @@ async function writeHiveSessionInstructions(
   await writeFile(instructionsPath, content, "utf8");
 }
 
-type RuntimeCompactionState = {
-  count: number;
-  lastCompactionAt: string | null;
-};
-
-type UserPromptPartInput = TextPartInput | FilePartInput;
+type UserPromptPartInput =
+  | { type: "text"; text: string }
+  | {
+      type: "file";
+      mime: string;
+      filename?: string;
+      url: string;
+    };
 
 export type AgentPromptInput = {
   parts: UserPromptPartInput[];
@@ -295,18 +301,45 @@ function normalizePromptInput(
   return input;
 }
 
+function toOpencodePrompt(input: string | AgentPromptInput): {
+  text: string;
+  files?: Array<{ uri: string; name?: string }>;
+} {
+  const { parts } = normalizePromptInput(input);
+  const text = parts
+    .filter(
+      (part): part is Extract<UserPromptPartInput, { type: "text" }> =>
+        part.type === "text"
+    )
+    .map((part) => part.text)
+    .join("\n");
+  const files = parts
+    .filter(
+      (part): part is Extract<UserPromptPartInput, { type: "file" }> =>
+        part.type === "file"
+    )
+    .map((part) => ({
+      uri: part.url,
+      ...(part.filename ? { name: part.filename } : {}),
+    }));
+
+  return files.length > 0 ? { text, files } : { text };
+}
+
 type RuntimeHandle = {
-  session: Session;
+  session: SessionInfo;
   cell: Cell;
   providerId?: string;
   modelId?: string;
   variant?: string;
-  directoryQuery: DirectoryQuery;
-  client: OpencodeClient;
+  client: OpenCodeClient;
   abortController: AbortController;
   status: AgentSessionStatus;
+  errorMessage: string | null;
+  lastPromptSentAt: number | null;
+  latestMessageReconciled: boolean;
   pendingInterrupt: boolean;
-  compaction: RuntimeCompactionState;
+  preserveResumeOnInterrupt: boolean;
   startMode: AgentMode;
   currentMode: AgentMode;
   modeUpdatedAt: string;
@@ -326,40 +359,20 @@ type StopRuntimeOptions = {
   deleteRemote?: boolean;
 };
 
-type ProviderVariant = {
-  disabled?: boolean;
+export type ProviderCatalog = {
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  default: ModelInfo | null;
 };
-
-export type ProviderModel = {
-  id?: string;
-  name?: string;
-  variants?: Record<string, ProviderVariant>;
-};
-
-export type ProviderEntry = {
-  id: string;
-  name?: string;
-  models?: Record<string, ProviderModel>;
-};
-
-type ProviderCatalogResponse = NonNullable<
-  Awaited<ReturnType<OpencodeClient["config"]["providers"]>>["data"]
->;
-
-type ProviderAuthEntry = {
-  token?: string;
-  [key: string]: unknown;
-};
-
-type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
 
 type AgentRuntimeDependencies = {
   db: typeof db;
   loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
-  loadOpencodeConfig: typeof loadOpencodeConfig;
   loadEffectiveOpencodeDefaults: typeof loadEffectiveOpencodeDefaults;
   publishAgentEvent: typeof publishAgentEvent;
-  acquireOpencodeClient: () => Promise<OpencodeClient>;
+  acquireOpencodeClient: () => Promise<OpenCodeClient>;
+  ensureHiveOpencodePlugin: typeof ensureHiveOpencodePlugin;
+  ensureHiveToolConfig: typeof ensureHiveToolConfig;
 };
 
 const agentRuntimeOverrides: Partial<AgentRuntimeDependencies> = {};
@@ -379,8 +392,6 @@ export const resetAgentRuntimeDependencies = () => {
 const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
   db: agentRuntimeOverrides.db ?? db,
   loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? loadHiveConfig,
-  loadOpencodeConfig:
-    agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
   loadEffectiveOpencodeDefaults:
     agentRuntimeOverrides.loadEffectiveOpencodeDefaults ??
     loadEffectiveOpencodeDefaults,
@@ -388,71 +399,11 @@ const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
     agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
   acquireOpencodeClient:
     agentRuntimeOverrides.acquireOpencodeClient ?? acquireSharedOpencodeClient,
+  ensureHiveOpencodePlugin:
+    agentRuntimeOverrides.ensureHiveOpencodePlugin ?? ensureHiveOpencodePlugin,
+  ensureHiveToolConfig:
+    agentRuntimeOverrides.ensureHiveToolConfig ?? ensureHiveToolConfig,
 });
-
-async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
-  try {
-    const raw = await readFile(AUTH_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    assertIsProviderCredentialStore(parsed, AUTH_PATH);
-    return parsed;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return {};
-    }
-    throw new Error(
-      `Failed to read provider credentials from ${AUTH_PATH}: ${
-        error instanceof Error ? error.message : error
-      }`
-    );
-  }
-}
-
-function assertIsProviderCredentialStore(
-  value: unknown,
-  source: string
-): asserts value is ProviderCredentialsStore {
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`Provider credentials at ${source} must be an object`);
-  }
-
-  for (const [providerId, entry] of Object.entries(value)) {
-    if (typeof entry !== "object" || entry === null) {
-      throw new Error(
-        `Credential entry for ${providerId} in ${source} must be an object`
-      );
-    }
-
-    const maybeToken = (entry as { token?: unknown }).token;
-    if (maybeToken !== undefined && typeof maybeToken !== "string") {
-      throw new Error(
-        `Credential entry for ${providerId} in ${source} has invalid "token"`
-      );
-    }
-  }
-}
-
-const PROVIDERS_NOT_REQUIRING_AUTH = new Set(["zen", "opencode"]);
-
-async function ensureProviderCredentials(
-  providerId: string | undefined
-): Promise<void> {
-  if (!providerId) {
-    return;
-  }
-
-  if (PROVIDERS_NOT_REQUIRING_AUTH.has(providerId)) {
-    return;
-  }
-
-  const credentials = await readProviderCredentials();
-  const providerAuth = credentials[providerId];
-  if (!providerAuth) {
-    throw new Error(
-      `Missing authentication for ${providerId}. Run opencode auth login ${providerId}.`
-    );
-  }
-}
 
 type TemplateAgentConfig = {
   providerId: string;
@@ -595,48 +546,43 @@ function normalizeAgentMode(value: string | undefined): AgentMode | undefined {
   return;
 }
 
-async function loadProvisioningModelOverride(args: {
+async function loadProvisioningAgentOptions(args: {
   runtimeDb: AgentRuntimeDependencies["db"];
   cellId: string;
-}): Promise<ModelSelectionCandidate | undefined> {
+}): Promise<{
+  modelSelection?: ModelSelectionCandidate;
+  startMode?: AgentMode;
+}> {
   const [provisioningState] = await args.runtimeDb
     .select({
       modelId: cellProvisioningStates.modelIdOverride,
       providerId: cellProvisioningStates.providerIdOverride,
       variant: cellProvisioningStates.variantOverride,
-    })
-    .from(cellProvisioningStates)
-    .where(eq(cellProvisioningStates.cellId, args.cellId))
-    .limit(1);
-
-  if (!provisioningState?.modelId) {
-    return;
-  }
-
-  return {
-    modelId: provisioningState.modelId,
-    ...(provisioningState.providerId
-      ? { providerId: provisioningState.providerId }
-      : {}),
-    ...(provisioningState.variant
-      ? { variant: provisioningState.variant }
-      : {}),
-  };
-}
-
-async function loadProvisioningStartMode(args: {
-  runtimeDb: AgentRuntimeDependencies["db"];
-  cellId: string;
-}): Promise<AgentMode | undefined> {
-  const [provisioningState] = await args.runtimeDb
-    .select({
       startMode: cellProvisioningStates.startMode,
     })
     .from(cellProvisioningStates)
     .where(eq(cellProvisioningStates.cellId, args.cellId))
     .limit(1);
+  const startMode = normalizeAgentMode(
+    provisioningState?.startMode ?? undefined
+  );
 
-  return normalizeAgentMode(provisioningState?.startMode ?? undefined);
+  return {
+    ...(provisioningState?.modelId
+      ? {
+          modelSelection: {
+            modelId: provisioningState.modelId,
+            ...(provisioningState.providerId
+              ? { providerId: provisioningState.providerId }
+              : {}),
+            ...(provisioningState.variant
+              ? { variant: provisioningState.variant }
+              : {}),
+          },
+        }
+      : {}),
+    ...(startMode ? { startMode } : {}),
+  };
 }
 
 function resolveConfigDefaultMode(args: {
@@ -673,12 +619,8 @@ async function shouldApplyProvisioningModelOverride(args: {
 
   try {
     const client = await args.acquireOpencodeClient();
-    const directoryQuery: DirectoryQuery = {
-      directory: args.cell.workspacePath,
-    };
     const existingSession = await getRemoteSession(
       client,
-      directoryQuery,
       args.cell.opencodeSessionId
     );
 
@@ -706,13 +648,17 @@ function resolveExplicitModelSelection(options?: {
 
 async function resolveRuntimeModelSelectionOptions(args: {
   cell: Cell;
-  cellId: string;
   options?: EnsureAgentSessionOptions;
+  persistedModelSelection?: ModelSelectionCandidate;
   deps: AgentRuntimeDependencies;
 }): Promise<ModelSelectionCandidate | undefined> {
   const explicitModelSelection = resolveExplicitModelSelection(args.options);
   if (explicitModelSelection) {
     return explicitModelSelection;
+  }
+
+  if (!args.persistedModelSelection) {
+    return;
   }
 
   const shouldApplyPersistedModelOverride =
@@ -726,60 +672,13 @@ async function resolveRuntimeModelSelectionOptions(args: {
     return;
   }
 
-  return loadProvisioningModelOverride({
-    runtimeDb: args.deps.db,
-    cellId: args.cellId,
-  });
-}
-
-type ProviderCatalogInfo = {
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
-};
-
-function buildProviderCatalogInfo(
-  catalog: ProviderCatalogResponse | undefined
-): ProviderCatalogInfo {
-  const providers: ProviderEntry[] = [];
-  const candidates = catalog?.providers;
-
-  if (Array.isArray(candidates)) {
-    for (const candidate of candidates) {
-      if (
-        typeof candidate !== "object" ||
-        candidate === null ||
-        typeof (candidate as { id?: unknown }).id !== "string"
-      ) {
-        continue;
-      }
-
-      const { id, name, models } = candidate as {
-        id: string;
-        name?: string;
-        models?: Record<string, ProviderModel>;
-      };
-      const providerEntry: ProviderEntry = { id };
-      if (name) {
-        providerEntry.name = name;
-      }
-      if (models) {
-        providerEntry.models = models;
-      }
-      providers.push(providerEntry);
-    }
-  }
-
-  const defaults = normalizeProviderDefaults(
-    (catalog as { default?: unknown } | undefined)?.default
-  );
-
-  return { providers, defaults };
+  return args.persistedModelSelection;
 }
 
 function findProviderById(
-  providers: ProviderEntry[],
+  providers: ProviderInfo[],
   providerId: string | undefined
-): ProviderEntry | undefined {
+): ProviderInfo | undefined {
   if (!providerId) {
     return;
   }
@@ -796,17 +695,15 @@ function formatListPreview(items: string[], limit = 10): string {
   return `${preview}, ... (+${items.length - limit} more)`;
 }
 
-function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
-  const models = provider.models;
-  if (!models) {
-    return [];
-  }
-
+function listProviderModelIdentifiers(
+  models: ModelInfo[],
+  providerId: string
+): string[] {
   const unique = new Set<string>();
-  for (const [modelKey, model] of Object.entries(models)) {
-    unique.add(modelKey);
-    if (model.id) {
+  for (const model of models) {
+    if (model.enabled && model.providerID === providerId) {
       unique.add(model.id);
+      unique.add(model.modelID);
     }
   }
 
@@ -814,26 +711,23 @@ function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
 }
 
 function listProviderModelVariantIdentifiers(args: {
-  provider: ProviderEntry;
+  models: ModelInfo[];
+  providerId: string;
   modelId: string;
 }): string[] {
-  const model = args.provider.models?.[args.modelId];
-  if (!model?.variants) {
-    return [];
-  }
-
-  return Object.entries(model.variants)
-    .filter(([, variant]) => !variant?.disabled)
-    .map(([variantId]) => variantId)
+  const model = findModel(args.models, args.providerId, args.modelId);
+  return (model?.variants ?? [])
+    .map((variant) => variant.id)
     .sort((a, b) => a.localeCompare(b));
 }
 
 function buildInvalidModelOverrideMessage(args: {
   modelId: string;
   providerId?: string;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): string {
-  const { modelId, providerId, providers } = args;
+  const { modelId, providerId, providers, models } = args;
 
   if (providerId) {
     const provider = findProviderById(providers, providerId);
@@ -845,7 +739,7 @@ function buildInvalidModelOverrideMessage(args: {
       return `Selected model override is invalid: provider "${providerId}" was not found. Available providers: ${availableProviders}. Refresh the model catalog and try again.`;
     }
 
-    const availableModels = listProviderModelIdentifiers(provider);
+    const availableModels = listProviderModelIdentifiers(models, provider.id);
     const availableModelSummary = availableModels.length
       ? formatListPreview(availableModels)
       : "none";
@@ -863,15 +757,17 @@ function buildInvalidVariantOverrideMessage(args: {
   providerId: string;
   modelId: string;
   variant: string;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): string {
   const provider = findProviderById(args.providers, args.providerId);
-  if (!provider?.models?.[args.modelId]) {
+  if (!(provider && findModel(args.models, args.providerId, args.modelId))) {
     return `Selected model variant override is invalid: model "${args.modelId}" is unavailable for provider "${args.providerId}".`;
   }
 
   const availableVariants = listProviderModelVariantIdentifiers({
-    provider,
+    models: args.models,
+    providerId: provider.id,
     modelId: args.modelId,
   });
   const variantSummary = availableVariants.length
@@ -881,83 +777,56 @@ function buildInvalidVariantOverrideMessage(args: {
   return `Selected model variant override is invalid: variant "${args.variant}" is unavailable for model "${args.modelId}" on provider "${args.providerId}". Available variants: ${variantSummary}. Refresh the model catalog and try again.`;
 }
 
-function resolveProviderModelMatch(
-  provider: ProviderEntry,
-  candidateModelId: string
-): string | undefined {
-  const models = provider.models;
-  if (!models) {
-    return;
-  }
-
-  if (models[candidateModelId]) {
-    return candidateModelId;
-  }
-
-  const match = Object.entries(models).find(
-    ([, model]) => model.id === candidateModelId
+function findModel(
+  models: ModelInfo[],
+  providerId: string,
+  modelId: string
+): ModelInfo | undefined {
+  return models.find(
+    (model) =>
+      model.enabled &&
+      model.providerID === providerId &&
+      (model.id === modelId || model.modelID === modelId)
   );
-
-  return match?.[0];
 }
 
 function resolveProviderVariantMatch(args: {
-  provider: ProviderEntry;
-  modelId: string;
+  model: ModelInfo;
   candidateVariant: string | undefined;
 }): string | undefined | null {
   if (!args.candidateVariant) {
     return;
   }
 
-  const variants = args.provider.models?.[args.modelId]?.variants;
-  if (!variants) {
-    return null;
-  }
-
-  const variant = variants[args.candidateVariant];
-  if (variant && !variant.disabled) {
+  if (
+    args.model.variants.some((variant) => variant.id === args.candidateVariant)
+  ) {
     return args.candidateVariant;
   }
 
   return null;
 }
 
-function getFirstModelId(
-  models: Record<string, ProviderModel> | undefined
-): string | undefined {
-  if (!models) {
-    return;
-  }
-
-  const [firstModel] = Object.values(models);
-  if (firstModel?.id) {
-    return firstModel.id;
-  }
-
-  const modelIds = Object.keys(models);
-  return modelIds.length ? modelIds[0] : undefined;
-}
-
 function resolveCandidateModelForProvider(args: {
-  provider: ProviderEntry;
+  provider: ProviderInfo;
+  models: ModelInfo[];
   candidate: ModelSelectionCandidate;
 }): ModelSelectionCandidate | null {
   if (!args.candidate.modelId) {
     return null;
   }
 
-  const resolvedModelId = resolveProviderModelMatch(
-    args.provider,
+  const model = findModel(
+    args.models,
+    args.provider.id,
     args.candidate.modelId
   );
-  if (!resolvedModelId) {
+  if (!model) {
     return null;
   }
 
   const resolvedVariant = resolveProviderVariantMatch({
-    provider: args.provider,
-    modelId: resolvedModelId,
+    model,
     candidateVariant: args.candidate.variant,
   });
   if (args.candidate.variant && !resolvedVariant) {
@@ -966,7 +835,7 @@ function resolveCandidateModelForProvider(args: {
 
   return {
     providerId: args.provider.id,
-    modelId: resolvedModelId,
+    modelId: model.id,
     ...(resolvedVariant ? { variant: resolvedVariant } : {}),
   };
 }
@@ -974,9 +843,11 @@ function resolveCandidateModelForProvider(args: {
 function resolveCandidateModel({
   candidate,
   providers,
+  models,
 }: {
   candidate: ModelSelectionCandidate;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): ModelSelectionCandidate | null {
   if (!candidate.modelId) {
     return null;
@@ -985,13 +856,17 @@ function resolveCandidateModel({
   if (candidate.providerId) {
     const provider = findProviderById(providers, candidate.providerId);
     if (provider) {
-      return resolveCandidateModelForProvider({ provider, candidate });
+      return resolveCandidateModelForProvider({ provider, models, candidate });
     }
     return null;
   }
 
   for (const provider of providers) {
-    const resolved = resolveCandidateModelForProvider({ provider, candidate });
+    const resolved = resolveCandidateModelForProvider({
+      provider,
+      models,
+      candidate,
+    });
     if (resolved) {
       return resolved;
     }
@@ -1000,39 +875,31 @@ function resolveCandidateModel({
   return null;
 }
 
-/**
- * Mirrors the OpenCode TUI model fallback order:
- * 1) CLI override, 2) opencode.json model, 3) recent model,
- * 4) provider default, 5) first available model.
- */
+/** Falls back to the first provider's default or first enabled model. */
 function resolveModelFallback({
-  candidates,
   providers,
-  defaults,
+  models,
+  defaultModel,
 }: {
-  candidates: ModelSelectionCandidate[];
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  defaultModel: ModelInfo | null;
 }): ModelSelectionCandidate | null {
-  for (const candidate of candidates) {
-    const resolved = resolveCandidateModel({ candidate, providers });
-    if (resolved) {
-      return resolved;
-    }
-  }
-
   const [provider] = providers;
-  if (!provider?.models) {
+  if (!provider) {
     return null;
   }
 
-  const defaultModelId = defaults[provider.id];
-  if (defaultModelId && provider.models[defaultModelId]) {
-    return { providerId: provider.id, modelId: defaultModelId };
+  if (defaultModel?.enabled && defaultModel.providerID === provider.id) {
+    return { providerId: provider.id, modelId: defaultModel.id };
   }
 
-  const modelId = getFirstModelId(provider.models);
-  return modelId ? { providerId: provider.id, modelId } : null;
+  const firstModel = models.find(
+    (model) => model.enabled && model.providerID === provider.id
+  );
+  return firstModel
+    ? { providerId: provider.id, modelId: firstModel.id }
+    : null;
 }
 
 type ModelSelectionContext = {
@@ -1045,8 +912,9 @@ type ModelSelectionContext = {
   };
   configDefaultProvider?: string;
   configDefaultModel?: string;
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  defaultModel: ModelInfo | null;
 };
 
 function resolveModelSelection({
@@ -1056,7 +924,8 @@ function resolveModelSelection({
   configDefaultProvider,
   configDefaultModel,
   providers,
-  defaults,
+  models,
+  defaultModel,
 }: ModelSelectionContext): ResolvedModelSelection {
   const overrideModel = resolveCandidateModel({
     candidate: {
@@ -1065,6 +934,7 @@ function resolveModelSelection({
       variant: options?.variant,
     },
     providers,
+    models,
   });
 
   if (options?.modelId && !overrideModel) {
@@ -1076,6 +946,7 @@ function resolveModelSelection({
           modelId: options.modelId,
         },
         providers,
+        models,
       })?.providerId;
 
     if (options.variant && resolvedProviderId) {
@@ -1086,6 +957,7 @@ function resolveModelSelection({
             modelId: options.modelId,
           },
           providers,
+          models,
         })?.modelId ?? options.modelId;
 
       throw new Error(
@@ -1094,6 +966,7 @@ function resolveModelSelection({
           modelId: resolvedModelId,
           variant: options.variant,
           providers,
+          models,
         })
       );
     }
@@ -1103,6 +976,7 @@ function resolveModelSelection({
         modelId: options.modelId,
         providerId: options.providerId,
         providers,
+        models,
       })
     );
   }
@@ -1114,6 +988,7 @@ function resolveModelSelection({
       variant: agentConfig?.variant,
     },
     providers,
+    models,
   });
 
   const validOpencodeDefault = resolveCandidateModel({
@@ -1123,6 +998,7 @@ function resolveModelSelection({
       variant: defaultOpencodeModel?.variant,
     },
     providers,
+    models,
   });
 
   const configFallback = resolveCandidateModel({
@@ -1131,12 +1007,13 @@ function resolveModelSelection({
       modelId: configDefaultModel,
     },
     providers,
+    models,
   });
 
   const providerFallback = resolveModelFallback({
-    candidates: [],
     providers,
-    defaults,
+    models,
+    defaultModel,
   });
 
   const resolvedSelection = pickResolvedSelection({
@@ -1146,24 +1023,22 @@ function resolveModelSelection({
     configFallback,
     providerFallback,
   });
-  const resolvedModel = resolvedSelection;
-  const effectiveOptions = options;
   const effectiveAgentConfig =
     agentConfig?.modelId && !agentModel ? undefined : agentConfig;
 
   const providerId =
-    resolvedModel?.providerId ??
+    resolvedSelection.providerId ??
     resolveProviderId(
-      effectiveOptions,
+      options,
       effectiveAgentConfig,
       validOpencodeDefault ?? undefined,
       configDefaultProvider
     );
 
   const modelId =
-    resolvedModel?.modelId ??
+    resolvedSelection.modelId ??
     resolveModelId({
-      options: effectiveOptions,
+      options,
       agentConfig: effectiveAgentConfig,
       configDefaultModel,
       defaultOpencodeModel: validOpencodeDefault ?? undefined,
@@ -1174,7 +1049,9 @@ function resolveModelSelection({
     source: resolvedSelection.source,
     providerId,
     modelId,
-    ...(resolvedModel?.variant ? { variant: resolvedModel.variant } : {}),
+    ...(resolvedSelection.variant
+      ? { variant: resolvedSelection.variant }
+      : {}),
   };
 }
 
@@ -1189,14 +1066,27 @@ export async function ensureAgentSession(
 export async function fetchAgentSession(
   sessionId: string
 ): Promise<AgentSessionRecord | null> {
+  const existing = runtimeRegistry.get(sessionId);
+  if (existing) {
+    return await fetchSynchronizedSessionRecord(async () => existing);
+  }
+
+  const cell = await getCellBySessionId(sessionId);
+  if (!cell) {
+    return null;
+  }
   return await fetchSynchronizedSessionRecord(() =>
-    ensureRuntimeForSession(sessionId)
+    ensureRuntimeForCell(cell.id, { force: false })
   );
 }
 
 export async function fetchAgentSessionForCell(
   cellId: string
 ): Promise<AgentSessionRecord | null> {
+  const cell = await getCellById(cellId);
+  if (!cell || cell.status === "deleting") {
+    return null;
+  }
   return await fetchSynchronizedSessionRecord(() =>
     ensureRuntimeForCell(cellId, { force: false })
   );
@@ -1205,13 +1095,27 @@ export async function fetchAgentSessionForCell(
 async function fetchSynchronizedSessionRecord(
   resolveRuntime: () => Promise<RuntimeHandle>
 ): Promise<AgentSessionRecord | null> {
-  try {
-    const runtime = await resolveRuntime();
-    await synchronizeRuntimeMode(runtime);
-    await synchronizeRuntimeStatus(runtime);
-    return toSessionRecord(runtime);
-  } catch {
-    return null;
+  const runtime = await resolveRuntime();
+  await synchronizeRuntimeSessionInfo(runtime);
+  await synchronizeRuntimeStatus(runtime);
+  return toSessionRecord(runtime);
+}
+
+async function synchronizeRuntimeSessionInfo(
+  runtime: RuntimeHandle
+): Promise<void> {
+  const session = await runtime.client.session.get({
+    sessionID: runtime.session.id,
+  });
+  runtime.session = session;
+  if (session.model) {
+    runtime.providerId = session.model.providerID;
+    runtime.modelId = session.model.id;
+    runtime.variant = session.model.variant;
+  }
+  const mode = normalizeAgentMode(session.agent);
+  if (mode) {
+    setRuntimeMode(runtime, mode);
   }
 }
 
@@ -1222,23 +1126,31 @@ export async function fetchAgentMessages(
   return loadRemoteMessages(runtime);
 }
 
-export async function fetchCompactionStats(
-  sessionId: string
-): Promise<RuntimeCompactionState> {
-  const runtime = await ensureRuntimeForSession(sessionId);
-  return runtime.compaction;
-}
-
 export async function updateAgentSessionModel(
   sessionId: string,
   model: { modelId: string; providerId?: string; variant?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForSession(sessionId);
   const nextProviderId = model.providerId ?? runtime.providerId;
-  await ensureProviderCredentials(nextProviderId);
+  if (!nextProviderId) {
+    throw new Error("A provider is required to select an OpenCode model");
+  }
+  await runtime.client.session.switchModel({
+    sessionID: runtime.session.id,
+    model: {
+      id: model.modelId,
+      providerID: nextProviderId,
+      ...(model.variant ? { variant: model.variant } : {}),
+    },
+  });
   runtime.providerId = nextProviderId;
   runtime.modelId = model.modelId;
   runtime.variant = model.variant;
+  runtime.session.model = {
+    providerID: nextProviderId,
+    id: model.modelId,
+    ...(model.variant ? { variant: model.variant } : {}),
+  };
   return toSessionRecord(runtime);
 }
 
@@ -1253,16 +1165,11 @@ export async function sendAgentMessage(
 export async function interruptAgentSession(sessionId: string): Promise<void> {
   const runtime = await ensureRuntimeForSession(sessionId);
   runtime.pendingInterrupt = true;
-  const result = await runtime.client.session.abort({
-    path: { id: runtime.session.id },
-    query: runtime.directoryQuery,
-  });
-
-  if (result.error) {
+  try {
+    await runtime.client.session.interrupt({ sessionID: runtime.session.id });
+  } catch (error) {
     runtime.pendingInterrupt = false;
-    throw new Error(
-      getRpcErrorMessage(result.error, "Failed to interrupt agent session")
-    );
+    throw error;
   }
 
   await applyRuntimeStatus(runtime, "awaiting_input");
@@ -1299,7 +1206,6 @@ export async function closeAgentSession(cellId: string): Promise<void> {
 
   await deleteRemoteOpencodeSession({
     sessionId: cell.opencodeSessionId,
-    directoryQuery: { directory: cell.workspacePath },
   });
   cellSessionMap.delete(cellId);
 }
@@ -1314,48 +1220,119 @@ export async function closeAllAgentSessions(
   }
 }
 
-const RESUME_SESSION_PROMPT = "Please continue";
+export async function prepareSessionsForServiceReplacement(
+  client: OpenCodeClient
+): Promise<void> {
+  await prepareOwnedActiveSessions(client);
+}
 
-export async function markAgentSessionsForResume(): Promise<void> {
-  const activeRuntimes = Array.from(runtimeRegistry.values()).filter(
-    (runtime) => runtime.status === "working" && !runtime.pendingInterrupt
-  );
-  if (activeRuntimes.length === 0) {
+export async function prepareAgentSessionsForShutdown(): Promise<void> {
+  const { acquireOpencodeClient } = getAgentRuntimeDependencies();
+  await prepareOwnedActiveSessions(await acquireOpencodeClient(), {
+    preserveRuntimeResume: true,
+  });
+}
+
+async function prepareOwnedActiveSessions(
+  client: OpenCodeClient,
+  options?: { preserveRuntimeResume?: boolean }
+): Promise<void> {
+  const activeSessionIds = Object.keys(await client.session.active());
+  if (activeSessionIds.length === 0) {
     return;
   }
 
   const { db: runtimeDb } = getAgentRuntimeDependencies();
-  const cellIds = activeRuntimes.map((runtime) => runtime.cell.id);
+  const ownedSessions = await runtimeDb
+    .select({ id: cells.id, sessionId: cells.opencodeSessionId })
+    .from(cells)
+    .where(inArray(cells.opencodeSessionId, activeSessionIds));
+
+  if (ownedSessions.length === 0) {
+    return;
+  }
+
   await runtimeDb
     .update(cells)
     .set({ resumeAgentSessionOnStartup: true })
-    .where(inArray(cells.id, cellIds));
+    .where(
+      inArray(
+        cells.id,
+        ownedSessions.map((cell) => cell.id)
+      )
+    );
+
+  updateOwnedRuntimeResumeState(
+    ownedSessions,
+    options?.preserveRuntimeResume === true
+  );
+
+  const failures: unknown[] = [];
+  for (const ownedSession of ownedSessions) {
+    const failure = await interruptOwnedSession(client, ownedSession);
+    if (failure) {
+      failures.push(failure);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "Failed to interrupt all active Hive OpenCode sessions"
+    );
+  }
+}
+
+function updateOwnedRuntimeResumeState(
+  ownedSessions: Array<{ id: string; sessionId: string | null }>,
+  preserveResumeOnInterrupt: boolean
+): void {
+  for (const { sessionId } of ownedSessions) {
+    const runtime = sessionId ? runtimeRegistry.get(sessionId) : undefined;
+    if (runtime) {
+      runtime.cell.resumeAgentSessionOnStartup = true;
+      runtime.preserveResumeOnInterrupt = preserveResumeOnInterrupt;
+    }
+  }
+}
+
+async function interruptOwnedSession(
+  client: OpenCodeClient,
+  ownedSession: { id: string; sessionId: string | null }
+): Promise<Error | null> {
+  if (!ownedSession.sessionId) {
+    return null;
+  }
+  try {
+    await client.session.interrupt({ sessionID: ownedSession.sessionId });
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(
+      `Failed to interrupt OpenCode session ${ownedSession.sessionId} for cell ${ownedSession.id}: ${message}`,
+      { cause: error }
+    );
+  }
 }
 
 export async function resumeAgentSessionsOnStartup(): Promise<void> {
-  const { db: runtimeDb } = getAgentRuntimeDependencies();
-  const cellsToResume = await runtimeDb
+  const { db: runtimeDb, acquireOpencodeClient } =
+    getAgentRuntimeDependencies();
+  const persistedCells = await runtimeDb
     .select()
     .from(cells)
-    .where(eq(cells.resumeAgentSessionOnStartup, true));
+    .where(isNotNull(cells.opencodeSessionId));
 
-  if (cellsToResume.length === 0) {
+  if (persistedCells.length === 0) {
     return;
   }
 
-  for (const cell of cellsToResume) {
+  const client = await acquireOpencodeClient();
+  const activeSessions = await client.session.active();
+
+  for (const cell of persistedCells) {
     try {
-      const runtime = await ensureRuntimeForCell(cell.id, { force: false });
-      const shouldResume = await shouldResumeRuntime(runtime);
-      if (shouldResume) {
-        await runtime.sendMessage(RESUME_SESSION_PROMPT);
-        continue;
-      }
-      await runtimeDb
-        .update(cells)
-        .set({ resumeAgentSessionOnStartup: false })
-        .where(eq(cells.id, cell.id));
-      runtime.cell.resumeAgentSessionOnStartup = false;
+      await recoverPersistedCell(cell, client, activeSessions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(
@@ -1365,66 +1342,96 @@ export async function resumeAgentSessionsOnStartup(): Promise<void> {
   }
 }
 
-async function shouldResumeRuntime(runtime: RuntimeHandle): Promise<boolean> {
-  const messages = await fetchRuntimeMessages(runtime, {
-    requireMessages: true,
-  });
-  if (!messages) {
-    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
+async function recoverPersistedCell(
+  cell: Cell,
+  client: OpenCodeClient,
+  activeSessions: Awaited<ReturnType<OpenCodeClient["session"]["active"]>>
+): Promise<void> {
+  const persistedSessionId = cell.opencodeSessionId;
+  if (!persistedSessionId) {
+    return;
   }
 
-  const lastMessage = messages.at(-1)?.info;
-  if (!lastMessage) {
-    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
+  let liveState: RuntimeLiveState | undefined;
+  if (!cell.resumeAgentSessionOnStartup) {
+    liveState = await loadRuntimeLiveState(
+      client,
+      persistedSessionId,
+      activeSessions
+    );
+    if (!hasRecoverableLiveState(liveState)) {
+      return;
+    }
   }
 
-  if (shouldResumeFromMessage(lastMessage)) {
-    return true;
+  const runtime = await ensureRuntimeForCell(cell.id, { force: false });
+  liveState ??= await loadRuntimeLiveState(
+    runtime.client,
+    runtime.session.id,
+    activeSessions
+  );
+  if (hasRecoverableLiveState(liveState)) {
+    await applyRuntimeLiveState(runtime, liveState);
+    return;
   }
 
-  if (!runtime.cell.resumeAgentSessionOnStartup) {
-    return false;
+  if (shouldResumeRuntime(runtime)) {
+    await waitForHivePluginReady(runtime.client, runtime.cell.workspacePath);
+    await runtime.client.session.prompt({
+      sessionID: runtime.session.id,
+      text: "",
+      resume: true,
+    });
+    await applyRuntimeStatus(runtime, "working");
+    return;
   }
 
-  return !isCompletedAssistantMessage(lastMessage);
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  await runtimeDb
+    .update(cells)
+    .set({ resumeAgentSessionOnStartup: false })
+    .where(eq(cells.id, cell.id));
+  runtime.cell.resumeAgentSessionOnStartup = false;
 }
 
-function shouldResumeFromMessage(message: Message): boolean {
-  if (message.role !== "assistant") {
-    return false;
+async function waitForHivePluginReady(
+  client: OpenCodeClient,
+  directory: string
+): Promise<void> {
+  const deadline = Date.now() + HIVE_PLUGIN_READY_TIMEOUT_MS;
+
+  while (true) {
+    const plugins = await client.plugin.list({
+      location: { directory },
+    });
+    const plugin = plugins.data.find(
+      (candidate) => candidate.id === HIVE_PLUGIN_ID
+    );
+    if (plugin?.state.status === "active") {
+      return;
+    }
+    if (plugin?.state.status === "failed") {
+      throw new Error(
+        `Required OpenCode plugin ${HIVE_PLUGIN_ID} failed: ${plugin.state.error}`
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Required OpenCode plugin ${HIVE_PLUGIN_ID} is not registered for ${directory} after ${HIVE_PLUGIN_READY_TIMEOUT_MS}ms`
+      );
+    }
+
+    await delay(HIVE_PLUGIN_READY_POLL_INTERVAL_MS);
   }
-  if (message.error) {
-    return false;
-  }
-  return !message.time.completed;
 }
 
-function isCompletedAssistantMessage(message: Message): boolean {
+function shouldResumeRuntime(runtime: RuntimeHandle): boolean {
   return (
-    message.role === "assistant" &&
-    (Boolean(message.error) || Boolean(message.time.completed))
+    runtime.cell.resumeAgentSessionOnStartup &&
+    runtime.session.outcome !== "succeeded" &&
+    runtime.session.outcome !== "failed"
   );
 }
-
-type AgentRuntimeError = {
-  readonly _tag: "AgentRuntimeError";
-  readonly cause: unknown;
-};
-
-const makeAgentRuntimeError = (cause: unknown): AgentRuntimeError => ({
-  _tag: "AgentRuntimeError",
-  cause,
-});
-
-const wrapAgentRuntime =
-  <Args extends unknown[], Result>(fn: (...args: Args) => Promise<Result>) =>
-  async (...args: Args): Promise<Result> => {
-    try {
-      return await fn(...args);
-    } catch (cause) {
-      throw makeAgentRuntimeError(cause);
-    }
-  };
 
 export type AgentRuntimeService = {
   readonly ensureAgentSession: (
@@ -1440,9 +1447,6 @@ export type AgentRuntimeService = {
   readonly fetchAgentMessages: (
     sessionId: string
   ) => Promise<AgentMessageRecord[]>;
-  readonly fetchCompactionStats: (
-    sessionId: string
-  ) => Promise<RuntimeCompactionState>;
   readonly updateAgentSessionModel: (
     sessionId: string,
     model: { modelId: string; providerId?: string; variant?: string }
@@ -1467,38 +1471,23 @@ export type AgentRuntimeService = {
   ) => Promise<void>;
   readonly fetchProviderCatalogForWorkspace: (
     workspaceRootPath: string
-  ) => Promise<ProviderCatalogResponse>;
+  ) => Promise<ProviderCatalog>;
 };
 
-const makeAgentRuntimeService = (): AgentRuntimeService => ({
-  ensureAgentSession: (cellId, options) =>
-    wrapAgentRuntime(ensureAgentSession)(cellId, options),
-  fetchAgentSession: (sessionId) =>
-    wrapAgentRuntime(fetchAgentSession)(sessionId),
-  fetchAgentSessionForCell: (cellId) =>
-    wrapAgentRuntime(fetchAgentSessionForCell)(cellId),
-  fetchAgentMessages: (sessionId) =>
-    wrapAgentRuntime(fetchAgentMessages)(sessionId),
-  fetchCompactionStats: (sessionId) =>
-    wrapAgentRuntime(fetchCompactionStats)(sessionId),
-  updateAgentSessionModel: (sessionId, model) =>
-    wrapAgentRuntime(updateAgentSessionModel)(sessionId, model),
-  sendAgentMessage: (sessionId, content) =>
-    wrapAgentRuntime(sendAgentMessage)(sessionId, content),
-  interruptAgentSession: (sessionId) =>
-    wrapAgentRuntime(interruptAgentSession)(sessionId),
-  stopAgentSession: (sessionId, options) =>
-    wrapAgentRuntime(stopAgentSession)(sessionId, options),
-  closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
-  closeAllAgentSessions: (options) =>
-    wrapAgentRuntime(closeAllAgentSessions)(options),
-  respondAgentPermission: (sessionId, permissionId, response) =>
-    wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
-  fetchProviderCatalogForWorkspace: (workspaceRootPath) =>
-    wrapAgentRuntime(fetchProviderCatalogForWorkspace)(workspaceRootPath),
-});
-
-export const agentRuntimeService = makeAgentRuntimeService();
+export const agentRuntimeService: AgentRuntimeService = {
+  ensureAgentSession,
+  fetchAgentSession,
+  fetchAgentSessionForCell,
+  fetchAgentMessages,
+  updateAgentSessionModel,
+  sendAgentMessage,
+  interruptAgentSession,
+  stopAgentSession,
+  closeAgentSession,
+  closeAllAgentSessions,
+  respondAgentPermission,
+  fetchProviderCatalogForWorkspace,
+};
 
 export async function respondAgentPermission(
   sessionId: string,
@@ -1506,17 +1495,11 @@ export async function respondAgentPermission(
   response: "once" | "always" | "reject"
 ): Promise<void> {
   const runtime = await ensureRuntimeForSession(sessionId);
-  const result = await runtime.client.postSessionIdPermissionsPermissionId({
-    path: { id: sessionId, permissionID: permissionId },
-    query: runtime.directoryQuery,
-    body: { response },
+  await runtime.client.permission.reply({
+    sessionID: sessionId,
+    requestID: permissionId,
+    reply: response,
   });
-
-  if (result.error) {
-    throw new Error(
-      getRpcErrorMessage(result.error, "Failed to respond to permission")
-    );
-  }
 }
 
 export async function ensureRuntimeForSession(
@@ -1550,13 +1533,6 @@ function getExistingRuntimeForCell(
   return runtimeRegistry.get(currentSessionId) ?? null;
 }
 
-function loadHiveConfigForWorkspace(
-  deps: AgentRuntimeDependencies,
-  workspaceRootPath: string
-): Promise<HiveConfig> {
-  return deps.loadHiveConfig(workspaceRootPath);
-}
-
 function resolveTemplateForCell(hiveConfig: HiveConfig, templateId: string) {
   const template = hiveConfig.templates[templateId];
   if (!template) {
@@ -1574,7 +1550,7 @@ async function hydrateInstructionsForCell(
   services: HiveSessionInstructionsService[];
 }> {
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
-  const hiveConfig = await loadHiveConfigForWorkspace(deps, workspaceRootPath);
+  const hiveConfig = await deps.loadHiveConfig(workspaceRootPath);
   const template = resolveTemplateForCell(hiveConfig, cell.templateId);
 
   const serviceRows = await deps.db
@@ -1608,6 +1584,11 @@ async function ensureRuntimeForCellUnlocked(
 ): Promise<RuntimeHandle> {
   const deps = getAgentRuntimeDependencies();
   const cell = await requireCellAvailableForRuntime(deps.db, cellId);
+  await deps.ensureHiveOpencodePlugin(cell.workspacePath);
+  await deps.ensureHiveToolConfig(cell.workspacePath, {
+    cellId: cell.id,
+    hiveUrl: resolveHiveServerUrl(),
+  });
   const activeRuntime = getExistingRuntimeForCell(cellId, options);
   if (activeRuntime) {
     await hydrateInstructionsForCell(deps, activeRuntime.cell);
@@ -1629,23 +1610,34 @@ async function ensureRuntimeForCellUnlocked(
     effectiveOpencodeDefaults,
   });
 
-  const providerCatalog =
-    await fetchProviderCatalogForWorkspace(workspaceRootPath);
-  const { providers, defaults } = buildProviderCatalogInfo(providerCatalog);
-
-  const selectionOptions = await resolveRuntimeModelSelectionOptions({
-    cell,
-    cellId,
-    options,
-    deps,
-  });
-
-  const persistedStartMode = await loadProvisioningStartMode({
+  const provisioningOptions = await loadProvisioningAgentOptions({
     runtimeDb: deps.db,
     cellId,
   });
+
+  const selectionOptions = await resolveRuntimeModelSelectionOptions({
+    cell,
+    options,
+    persistedModelSelection: provisioningOptions.modelSelection,
+    deps,
+  });
+
+  const providerCatalog = await waitForConfiguredCatalogModel({
+    workspaceRootPath,
+    candidates: [
+      selectionOptions,
+      agentConfig,
+      defaultOpencodeModel,
+      {
+        providerId: configDefaultProvider,
+        modelId: configDefaultModel,
+      },
+    ],
+    configuredProviderIds: effectiveOpencodeDefaults.configuredProviderIds,
+  });
+
   const startMode =
-    options?.startMode ?? persistedStartMode ?? configDefaultMode;
+    options?.startMode ?? provisioningOptions.startMode ?? configDefaultMode;
 
   const selection = resolveModelSelection({
     options: selectionOptions,
@@ -1653,8 +1645,9 @@ async function ensureRuntimeForCellUnlocked(
     defaultOpencodeModel,
     configDefaultProvider,
     configDefaultModel,
-    providers,
-    defaults,
+    providers: providerCatalog.providers,
+    models: providerCatalog.models,
+    defaultModel: providerCatalog.default,
   });
   const shouldDeferToOpencodeDefault = selection.source === "opencode-default";
 
@@ -1668,10 +1661,13 @@ async function ensureRuntimeForCellUnlocked(
     ? undefined
     : selection.variant;
 
-  await ensureProviderCredentials(requestedProviderId);
-
-  const { runtime, created: createdSession } = await startOpencodeRuntime({
+  const {
+    runtime,
+    created: createdSession,
+    abortController,
+  } = await startOpencodeRuntime({
     cell,
+    authenticationProviderId: selection.providerId,
     providerId: requestedProviderId,
     modelId: requestedModelId,
     variant: requestedVariant,
@@ -1679,21 +1675,27 @@ async function ensureRuntimeForCellUnlocked(
     force: options?.force ?? false,
     deps,
   });
+  await waitForHivePluginReady(runtime.client, cell.workspacePath);
 
-  const restoredModel = await resolveSessionModelPreference(runtime);
-  if (restoredModel && !options?.modelId) {
-    await ensureProviderCredentials(restoredModel.providerId);
-    runtime.providerId = restoredModel.providerId;
-    runtime.modelId = restoredModel.modelId;
-    runtime.variant = restoredModel.variant;
-  }
+  let restoredModel: Awaited<ReturnType<typeof resolveSessionModelPreference>> =
+    null;
+  await startEventStream({
+    runtime,
+    abortController,
+    beforeInitialReconciliation: () => {
+      restoredModel = resolveSessionModelPreference(runtime);
+      if (restoredModel && !options?.modelId) {
+        runtime.providerId = restoredModel.providerId;
+        runtime.modelId = restoredModel.modelId;
+        runtime.variant = restoredModel.variant;
+      }
 
-  const restoredMode = await resolveSessionModePreference(runtime);
-  if (restoredMode) {
-    setRuntimeMode(runtime, restoredMode);
-  }
-
-  await synchronizeRuntimeStatus(runtime);
+      const restoredMode = resolveSessionModePreference(runtime);
+      if (restoredMode) {
+        setRuntimeMode(runtime, restoredMode);
+      }
+    },
+  });
 
   if (
     createdSession &&
@@ -1736,67 +1738,30 @@ function shouldSeedModelPreference(args: {
   );
 }
 
-const isIdleValidationConfigMissingError = (error: unknown): boolean => {
-  const candidate = error as
-    | { name?: unknown; data?: unknown }
-    | null
-    | undefined;
-  if (!candidate || typeof candidate !== "object") {
-    return false;
-  }
-
-  const name =
-    "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
-  if (name !== "UnknownError") {
-    return false;
-  }
-
-  const data =
-    "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-
-  const message = (data as { message?: unknown }).message;
-  if (typeof message !== "string") {
-    return false;
-  }
-
-  return message.includes(
-    "Idle validation plugin requires .opencode/plugin/idle-validate.json configuration file."
-  );
-};
-
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
-): Promise<ProviderCatalogResponse> {
+): Promise<ProviderCatalog> {
   const { acquireOpencodeClient: acquireClient } =
     getAgentRuntimeDependencies();
   const client = await acquireClient();
 
-  const fetchProviders = async (directory?: string) => {
-    const response = await client.config.providers({
-      throwOnError: true,
-      ...(directory ? { query: { directory } } : {}),
-    });
-
-    if (!response.data) {
-      throw new Error("OpenCode server returned an empty provider catalog");
-    }
-
-    return response.data;
-  };
-
   try {
-    return await fetchProviders(workspaceRootPath);
+    const location = { location: { directory: workspaceRootPath } };
+    const [providerResult, modelResult, defaultResult] = await Promise.all([
+      client.provider.list(location),
+      client.model.list(location),
+      client.model.default(location),
+    ]);
+    return {
+      providers: providerResult.data,
+      models: modelResult.data,
+      default: defaultResult.data,
+    };
   } catch (error) {
-    const isIdlePluginError = isIdleValidationConfigMissingError(error);
-
     // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
-    console.error("[opencode] config.providers error", {
+    console.error("[opencode] provider catalog error", {
       workspaceRootPath,
       error,
-      isIdlePluginError,
     });
 
     const message =
@@ -1807,89 +1772,112 @@ export async function fetchProviderCatalogForWorkspace(
   }
 }
 
-type StartRuntimeArgs = {
+async function waitForConfiguredCatalogModel(args: {
+  workspaceRootPath: string;
+  candidates: Array<ModelSelectionCandidate | undefined>;
+  configuredProviderIds: string[] | undefined;
+}): Promise<ProviderCatalog> {
+  let catalog = await fetchProviderCatalogForWorkspace(args.workspaceRootPath);
+  let requestedModel:
+    | { providerId: string; modelId: string; variant?: string }
+    | undefined;
+  for (const candidate of args.candidates) {
+    if (!(candidate?.providerId && candidate.modelId)) {
+      continue;
+    }
+    if (
+      findProviderById(catalog.providers, candidate.providerId) &&
+      findModel(catalog.models, candidate.providerId, candidate.modelId)
+    ) {
+      return catalog;
+    }
+    if (args.configuredProviderIds?.includes(candidate.providerId)) {
+      requestedModel = {
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        variant: candidate.variant,
+      };
+      break;
+    }
+  }
+  if (!requestedModel) {
+    return catalog;
+  }
+  const catalogCandidate = {
+    providerId: requestedModel.providerId,
+    modelId: requestedModel.modelId,
+  };
+
+  const deadline = Date.now() + PROVIDER_CATALOG_READY_TIMEOUT_MS;
+  while (
+    !resolveCandidateModel({
+      candidate: catalogCandidate,
+      providers: catalog.providers,
+      models: catalog.models,
+    }) &&
+    Date.now() < deadline
+  ) {
+    await delay(PROVIDER_CATALOG_READY_POLL_INTERVAL_MS);
+    catalog = await fetchProviderCatalogForWorkspace(args.workspaceRootPath);
+  }
+
+  if (
+    !resolveCandidateModel({
+      candidate: catalogCandidate,
+      providers: catalog.providers,
+      models: catalog.models,
+    })
+  ) {
+    throw new Error(
+      `Configured OpenCode model "${catalogCandidate.providerId}/${catalogCandidate.modelId}" did not enter the provider catalog after ${PROVIDER_CATALOG_READY_TIMEOUT_MS}ms`
+    );
+  }
+
+  return catalog;
+}
+
+type RuntimeSessionOptions = {
   cell: Cell;
+  authenticationProviderId?: string;
   providerId?: string;
   modelId?: string;
   variant?: string;
   startMode: AgentMode;
   force: boolean;
+};
+
+type StartRuntimeArgs = RuntimeSessionOptions & {
   deps: AgentRuntimeDependencies;
 };
 
-async function primeSessionAgentMode(args: {
-  client: OpencodeClient;
-  sessionId: string;
-  directoryQuery: DirectoryQuery;
-  startMode: AgentMode;
-  providerId?: string;
-  modelId?: string;
-  variant?: string;
-}): Promise<void> {
-  if (args.startMode !== "plan") {
-    return;
-  }
-
-  try {
-    const modelSelection =
-      args.providerId && args.modelId
-        ? {
-            model: {
-              providerID: args.providerId,
-              modelID: args.modelId,
-            },
-            ...(args.variant ? { variant: args.variant } : {}),
-          }
-        : {};
-
-    await args.client.session.prompt({
-      path: { id: args.sessionId },
-      query: args.directoryQuery,
-      body: {
-        agent: "plan",
-        noReply: true,
-        ...modelSelection,
-        parts: [
-          {
-            type: "text",
-            text: "",
-          },
-        ],
-      },
-    });
-  } catch {
-    // Continue even if OpenCode rejects agent priming.
-  }
-}
-
 async function startOpencodeRuntime({
   cell,
+  authenticationProviderId,
   providerId,
   modelId,
   variant,
   startMode,
   force,
   deps,
-}: StartRuntimeArgs): Promise<{ runtime: RuntimeHandle; created: boolean }> {
+}: StartRuntimeArgs): Promise<{
+  runtime: RuntimeHandle;
+  created: boolean;
+  abortController: AbortController;
+}> {
   const client = await deps.acquireOpencodeClient();
-  const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
   const { session, created } = await resolveOpencodeSession({
     client,
     cell,
-    directoryQuery,
+    authenticationProviderId,
+    providerId,
+    modelId,
+    variant,
+    startMode,
     force,
   });
 
   if (created) {
-    await primeSessionAgentMode({
-      client,
-      sessionId: session.id,
-      directoryQuery,
-      startMode,
-      providerId,
-      modelId,
-      variant,
-    });
+    session.agent = startMode;
   }
 
   if (created || cell.opencodeSessionId !== session.id) {
@@ -1909,52 +1897,41 @@ async function startOpencodeRuntime({
     providerId,
     modelId,
     variant,
-    directoryQuery,
     client,
     abortController,
     status: "awaiting_input",
+    errorMessage: null,
+    lastPromptSentAt: null,
+    latestMessageReconciled: false,
     pendingInterrupt: false,
-    compaction: { count: 0, lastCompactionAt: null },
+    preserveResumeOnInterrupt: false,
     startMode,
     currentMode: startMode,
     modeUpdatedAt: new Date().toISOString(),
     async sendMessage(input) {
-      await applyRuntimeStatus(runtime, "working");
+      runtime.pendingInterrupt = false;
+      runtime.session.outcome = undefined;
+      runtime.lastPromptSentAt = Date.now();
+      runtime.latestMessageReconciled = false;
 
-      const activeModelId = runtime.modelId;
-      const { parts } = normalizePromptInput(input);
-      const promptBody =
-        activeModelId && runtime.providerId
-          ? {
-              parts,
-              model: {
-                providerID: runtime.providerId,
-                modelID: activeModelId,
-              },
-              ...(runtime.variant ? { variant: runtime.variant } : {}),
-            }
-          : { parts };
-
-      const response = await client.session.prompt({
-        path: { id: session.id },
-        query: directoryQuery,
-        body: {
-          ...promptBody,
-          agent: runtime.currentMode,
-        },
-      });
-
-      if (response.error) {
-        if (runtime.pendingInterrupt && isMessageAbortedError(response.error)) {
+      try {
+        await waitForHivePluginReady(
+          runtime.client,
+          runtime.cell.workspacePath
+        );
+        await applyRuntimeStatus(runtime, "working");
+        await runtime.client.session.prompt({
+          sessionID: session.id,
+          ...toOpencodePrompt(input),
+        });
+      } catch (error) {
+        if (runtime.pendingInterrupt && isMessageAbortedError(error)) {
           runtime.pendingInterrupt = false;
           await applyRuntimeStatus(runtime, "awaiting_input");
           return;
         }
 
-        const errorMessage = getRpcErrorMessage(
-          response.error,
-          "Agent prompt failed"
-        );
+        const errorMessage = getRpcErrorMessage(error, "Agent prompt failed");
         await applyRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
       }
@@ -1966,8 +1943,7 @@ async function startOpencodeRuntime({
       if (options.deleteRemote === true) {
         await deleteRemoteOpencodeSession({
           sessionId: session.id,
-          directoryQuery,
-          client,
+          client: runtime.client,
         });
       }
       await applyRuntimeStatus(runtime, "completed", undefined, {
@@ -1978,232 +1954,530 @@ async function startOpencodeRuntime({
 
   setRuntimeStatus(runtime, "awaiting_input");
 
-  startEventStream({
-    runtime,
-    client,
-    directoryQuery,
-    abortController,
-  });
-
-  return { runtime, created };
+  return { runtime, created, abortController };
 }
 
-type ResolveSessionArgs = {
-  client: OpencodeClient;
-  cell: Cell;
-  directoryQuery: DirectoryQuery;
-  force: boolean;
+type ResolveSessionArgs = RuntimeSessionOptions & {
+  client: OpenCodeClient;
 };
 
 async function resolveOpencodeSession({
   client,
   cell,
-  directoryQuery,
+  authenticationProviderId,
+  providerId,
+  modelId,
+  variant,
+  startMode,
   force,
-}: ResolveSessionArgs): Promise<{ session: Session; created: boolean }> {
+}: ResolveSessionArgs): Promise<{ session: SessionInfo; created: boolean }> {
   if (!force && cell.opencodeSessionId) {
-    const existing = await getRemoteSession(
-      client,
-      directoryQuery,
-      cell.opencodeSessionId
-    );
+    const existing = await getRemoteSession(client, cell.opencodeSessionId);
     if (existing) {
       return { session: existing, created: false };
     }
   }
 
-  const created = await client.session.create({
-    body: {
-      title: cell.name,
-    },
-    query: directoryQuery,
+  await assertProviderConnected({
+    providerId: authenticationProviderId,
+    workspacePath: cell.workspacePath,
+    client,
   });
 
-  if (created.error || !created.data) {
-    throw new Error(
-      getRpcErrorMessage(created.error, "Failed to create OpenCode session")
-    );
-  }
+  const created = await client.session.create({
+    title: cell.name,
+    agent: startMode,
+    ...(providerId && modelId
+      ? {
+          model: {
+            id: modelId,
+            providerID: providerId,
+            ...(variant ? { variant } : {}),
+          },
+        }
+      : {}),
+    location: { directory: cell.workspacePath },
+  });
 
-  return { session: created.data, created: true };
+  return { session: created, created: true };
 }
 
 async function getRemoteSession(
-  client: OpencodeClient,
-  directoryQuery: DirectoryQuery,
+  client: OpenCodeClient,
   sessionId: string
-): Promise<Session | null> {
-  const response = await client.session.get({
-    path: { id: sessionId },
-    query: directoryQuery,
-  });
-
-  if (response.error || !response.data) {
-    return null;
-  }
-
-  return response.data;
-}
-
-async function startEventStream({
-  runtime,
-  client,
-  directoryQuery,
-  abortController,
-}: {
-  runtime: RuntimeHandle;
-  client: OpencodeClient;
-  directoryQuery: DirectoryQuery;
-  abortController: AbortController;
-}) {
+): Promise<SessionInfo | null> {
   try {
-    const events = await client.event.subscribe({
-      query: directoryQuery,
-      signal: abortController.signal,
-    });
-    const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
-
-    for await (const event of events.stream) {
-      const eventSessionId = getEventSessionId(event);
-      if (eventSessionId && eventSessionId !== runtime.session.id) {
-        continue;
-      }
-
-      updateRuntimeModeFromEvent(runtime, event);
-      recordCompactionEvent(runtime, event);
-      publish(runtime.session.id, event);
-      await updateRuntimeStatusFromEvent(runtime, event);
-    }
-  } catch {
-    // Event stream closed
-  }
-}
-
-async function resolveSessionModelPreference(
-  runtime: RuntimeHandle
-): Promise<{ providerId: string; modelId: string; variant?: string } | null> {
-  try {
-    const info = await findLatestMessageInfo(runtime, (message) => {
-      const modelSelection = extractMessageModelSelection(message);
-      return message.role === "user" && Boolean(modelSelection);
-    });
-    const modelSelection = info ? extractMessageModelSelection(info) : null;
-    if (!modelSelection) {
+    return await client.session.get({ sessionID: sessionId });
+  } catch (error) {
+    if (isSessionNotFoundError(error)) {
       return null;
     }
-
-    return {
-      providerId: modelSelection.providerId,
-      modelId: modelSelection.modelId,
-      ...(modelSelection.variant ? { variant: modelSelection.variant } : {}),
-    };
-  } catch {
-    return null;
+    throw error;
   }
 }
 
-async function resolveSessionModePreference(
-  runtime: RuntimeHandle
-): Promise<AgentMode | null> {
-  try {
-    const info = await findLatestMessageInfo(runtime, (message) =>
-      Boolean(resolveMessageMode(message))
-    );
-    return info ? (resolveMessageMode(info) ?? null) : null;
-  } catch {
-    return null;
-  }
+function startEventStream({
+  runtime,
+  abortController,
+  beforeInitialReconciliation,
+}: {
+  runtime: RuntimeHandle;
+  abortController: AbortController;
+  beforeInitialReconciliation: () => Promise<void> | void;
+}): Promise<void> {
+  const initialReconciliation = Promise.withResolvers<void>();
+  runEventStream({
+    runtime,
+    abortController,
+    beforeInitialReconciliation,
+    resolveInitialReconciliation: initialReconciliation.resolve,
+    rejectInitialReconciliation: initialReconciliation.reject,
+  }).catch(initialReconciliation.reject);
+  return initialReconciliation.promise;
 }
 
-async function findLatestMessageInfo(
-  runtime: RuntimeHandle,
-  matches: (message: Message) => boolean
-): Promise<Message | null> {
-  const messages = await fetchRuntimeMessages(runtime);
-  if (!messages) {
-    return null;
-  }
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: reconnect startup must distinguish initial reconciliation from later failures
+async function runEventStream({
+  runtime,
+  abortController,
+  beforeInitialReconciliation,
+  resolveInitialReconciliation,
+  rejectInitialReconciliation,
+}: {
+  runtime: RuntimeHandle;
+  abortController: AbortController;
+  beforeInitialReconciliation: () => Promise<void> | void;
+  resolveInitialReconciliation: () => void;
+  rejectInitialReconciliation: (error: unknown) => void;
+}): Promise<void> {
+  let reconciled = false;
+  const markReconciled = () => {
+    if (reconciled) {
+      return;
+    }
+    reconciled = true;
+    resolveInitialReconciliation();
+  };
+  while (!abortController.signal.aborted) {
+    try {
+      await consumeEventStream(
+        runtime,
+        abortController.signal,
+        markReconciled,
+        reconciled ? undefined : beforeInitialReconciliation
+      );
+    } catch (error) {
+      if (!reconciled) {
+        abortController.abort();
+        rejectInitialReconciliation(error);
+        return;
+      }
+      if (abortController.signal.aborted) {
+        return;
+      }
+    }
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const info = messages[index]?.info;
-    if (info && matches(info)) {
-      return info;
+    try {
+      await delay(EVENT_STREAM_RECONNECT_DELAY_MS, undefined, {
+        signal: abortController.signal,
+      });
+      runtime.client =
+        await getAgentRuntimeDependencies().acquireOpencodeClient();
+    } catch {
+      if (abortController.signal.aborted) {
+        return;
+      }
     }
   }
-
-  return null;
 }
 
-async function synchronizeRuntimeMode(runtime: RuntimeHandle): Promise<void> {
-  const resolvedMode = await resolveSessionModePreference(runtime);
-  if (!resolvedMode) {
-    return;
+async function consumeEventStream(
+  runtime: RuntimeHandle,
+  signal: AbortSignal,
+  onReconciled: () => void,
+  beforeReconcile?: () => Promise<void> | void
+): Promise<void> {
+  const events = runtime.client.event.subscribe({ signal });
+  const iterator = events[Symbol.asyncIterator]();
+  let nextEvent = iterator.next();
+  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
+  await beforeReconcile?.();
+  await synchronizeRuntimeStatus(runtime);
+  onReconciled();
+
+  while (true) {
+    const next = await nextEvent;
+    if (next.done) {
+      return;
+    }
+    nextEvent = iterator.next();
+    const event = next.value;
+    const eventSessionId = getEventSessionId(event);
+    if (eventSessionId !== runtime.session.id) {
+      continue;
+    }
+
+    updateRuntimeModeFromEvent(runtime, event);
+    updateRuntimeModelFromEvent(runtime, event);
+    const inputRequiredEvent = resolveInputRequiredEvent(event);
+    if (inputRequiredEvent) {
+      publish(runtime.session.id, inputRequiredEvent);
+    }
+    await updateRuntimeStatusFromEvent(runtime, event);
+  }
+}
+
+function toRuntimeFilePart(
+  file: NonNullable<
+    Extract<SessionMessageInfo, { type: "user" }>["files"]
+  >[number]
+): AgentMessagePart {
+  const url =
+    file.source.type === "uri"
+      ? file.source.uri
+      : `data:${file.mime};base64,${file.data}`;
+  return {
+    type: "file",
+    mime: file.mime,
+    ...(file.name ? { filename: file.name } : {}),
+    url,
+  };
+}
+
+function getMessageParts(message: SessionMessageInfo): AgentMessagePart[] {
+  if (message.type === "user") {
+    const parts: AgentMessagePart[] = message.text
+      ? [{ type: "text", text: message.text }]
+      : [];
+    parts.push(...(message.files ?? []).map(toRuntimeFilePart));
+    return parts;
   }
 
-  setRuntimeMode(runtime, resolvedMode);
+  if (message.type === "assistant") {
+    return message.content.map((part) => ({ ...part }));
+  }
+
+  const text = getOpencodeSystemMessageText(message);
+  return text ? [{ type: "text", text }] : [];
 }
 
-async function resolveSessionStatusPreference(
+type OpencodeSystemMessage = Exclude<
+  SessionMessageInfo,
+  { type: "user" } | { type: "assistant" }
+>;
+
+function getOpencodeSystemMessageText(message: OpencodeSystemMessage): string {
+  switch (message.type) {
+    case "synthetic":
+    case "system":
+    case "skill":
+      return message.text;
+    case "shell":
+      return message.output?.output ?? message.command;
+    case "compaction":
+      return message.status === "failed" ? "" : message.summary;
+    default:
+      return "";
+  }
+}
+
+function resolveSessionModelPreference(
   runtime: RuntimeHandle
-): Promise<AgentSessionStatus | null> {
-  try {
-    const messages = await fetchRuntimeMessages(runtime, {
-      requireMessages: true,
+): { providerId: string; modelId: string; variant?: string } | null {
+  if (!runtime.session.model) {
+    return null;
+  }
+
+  return {
+    providerId: runtime.session.model.providerID,
+    modelId: runtime.session.model.id,
+    ...(runtime.session.model.variant
+      ? { variant: runtime.session.model.variant }
+      : {}),
+  };
+}
+
+function resolveSessionModePreference(
+  runtime: RuntimeHandle
+): AgentMode | null {
+  return normalizeAgentMode(runtime.session.agent) ?? null;
+}
+
+async function* iterateRemoteMessages(
+  runtime: RuntimeHandle,
+  options: { limit: number; order: "asc" | "desc" }
+): AsyncGenerator<SessionMessageInfo> {
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  const seenMessages = new Set<string>();
+  do {
+    const page = await runtime.client.message.list({
+      sessionID: runtime.session.id,
+      limit: options.limit,
+      ...(cursor ? { cursor } : { order: options.order }),
     });
-    if (!messages) {
-      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
+    for (const message of page.data) {
+      if (!seenMessages.has(message.id)) {
+        seenMessages.add(message.id);
+        yield message;
+      }
     }
-
-    const lastMessage = messages.at(-1)?.info;
-    if (!lastMessage) {
-      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
+    const nextCursor = page.cursor.next ?? undefined;
+    if (nextCursor && seenCursors.has(nextCursor)) {
+      throw new Error(
+        `OpenCode message pagination repeated cursor ${JSON.stringify(nextCursor)}`
+      );
     }
-
-    if (shouldResumeFromMessage(lastMessage)) {
-      return "working";
+    if (nextCursor) {
+      seenCursors.add(nextCursor);
     }
-
-    if (
-      runtime.cell.resumeAgentSessionOnStartup &&
-      !isCompletedAssistantMessage(lastMessage)
-    ) {
-      return "working";
-    }
-
-    return null;
-  } catch {
-    return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
-  }
-}
-
-async function fetchRuntimeMessages(
-  runtime: RuntimeHandle,
-  options: { requireMessages?: boolean } = {}
-) {
-  const query = runtime.directoryQuery.directory
-    ? { directory: runtime.directoryQuery.directory, limit: 100 }
-    : { limit: 100 };
-  const response = await runtime.client.session.messages({
-    path: { id: runtime.session.id },
-    query,
-  });
-
-  if (response.error || !response.data) {
-    return null;
-  }
-
-  return options.requireMessages && response.data.length === 0
-    ? null
-    : response.data;
+    cursor = nextCursor;
+  } while (cursor);
 }
 
 async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
-  const resolvedStatus = await resolveSessionStatusPreference(runtime);
-  if (!resolvedStatus) {
+  const liveState = await loadRuntimeLiveState(
+    runtime.client,
+    runtime.session.id
+  );
+  if (liveState.permissions.length > 0 || liveState.forms.length > 0) {
+    await applyRuntimeLiveState(runtime, liveState);
     return;
   }
 
-  setRuntimeStatus(runtime, resolvedStatus);
+  if (liveState.active || hasQueuedExecution(liveState)) {
+    await applyRuntimeLiveState(runtime, liveState);
+    return;
+  }
+
+  if (
+    outcomeBelongsToCurrentPrompt(runtime) &&
+    (runtime.session.outcome === "succeeded" ||
+      (runtime.session.outcome === "interrupted" &&
+        !runtime.cell.resumeAgentSessionOnStartup))
+  ) {
+    runtime.lastPromptSentAt = null;
+    runtime.latestMessageReconciled = true;
+    await applyRuntimeStatus(runtime, "awaiting_input");
+    return;
+  }
+
+  if (await synchronizeRuntimeFailure(runtime)) {
+    return;
+  }
+
+  if (hasRecoverableLiveState(liveState)) {
+    await applyRuntimeLiveState(runtime, liveState);
+    return;
+  }
+}
+
+async function synchronizeRuntimeFailure(
+  runtime: RuntimeHandle
+): Promise<boolean> {
+  if (await applyKnownRuntimeFailure(runtime)) {
+    return true;
+  }
+
+  if (runtime.latestMessageReconciled && runtime.lastPromptSentAt === null) {
+    return false;
+  }
+
+  const latestError = await loadLatestSessionError(runtime);
+  runtime.latestMessageReconciled = true;
+  const belongsToPendingPrompt =
+    latestError &&
+    runtime.lastPromptSentAt !== null &&
+    latestError.createdAt >= runtime.lastPromptSentAt;
+  const hasNoPendingPrompt = runtime.lastPromptSentAt === null;
+  if (latestError && (belongsToPendingPrompt || hasNoPendingPrompt)) {
+    runtime.lastPromptSentAt = null;
+    await applyRuntimeStatus(runtime, "error", latestError.message);
+    return true;
+  }
+
+  return false;
+}
+
+async function applyKnownRuntimeFailure(
+  runtime: RuntimeHandle
+): Promise<boolean> {
+  if (runtime.status !== "error" && runtime.session.outcome !== "failed") {
+    return false;
+  }
+
+  if (
+    runtime.session.outcome === "failed" &&
+    !outcomeBelongsToCurrentPrompt(runtime)
+  ) {
+    return false;
+  }
+
+  const latestError = runtime.errorMessage
+    ? undefined
+    : await loadLatestSessionError(runtime);
+  const message = runtime.errorMessage ?? latestError?.message;
+  if (runtime.status !== "error" || message !== runtime.errorMessage) {
+    runtime.lastPromptSentAt = null;
+    await applyRuntimeStatus(runtime, "error", message);
+  }
+  return true;
+}
+
+function outcomeBelongsToCurrentPrompt(runtime: RuntimeHandle): boolean {
+  return (
+    runtime.lastPromptSentAt === null ||
+    runtime.session.time.updated >= runtime.lastPromptSentAt
+  );
+}
+
+async function loadLatestSessionError(
+  runtime: RuntimeHandle
+): Promise<{ message: string; createdAt: number } | undefined> {
+  const page = await runtime.client.message.list({
+    sessionID: runtime.session.id,
+    limit: 1,
+    order: "desc",
+  });
+  const latest = page.data[0];
+  if (!latest) {
+    return;
+  }
+
+  const error = getMessageError(latest);
+  return error
+    ? { message: formatSessionError(error), createdAt: latest.time.created }
+    : undefined;
+}
+
+type RuntimeLiveState = {
+  active: boolean;
+  inbox: Awaited<ReturnType<OpenCodeClient["session"]["inbox"]["list"]>>;
+  permissions: Awaited<ReturnType<OpenCodeClient["permission"]["list"]>>;
+  forms: Awaited<ReturnType<OpenCodeClient["form"]["list"]>>;
+};
+
+type PendingRuntimeInputs = Pick<RuntimeLiveState, "permissions" | "forms">;
+type InputRequiredEvent = Extract<AgentStreamEvent, { type: "input_required" }>;
+
+async function loadPendingRuntimeInputs(
+  client: OpenCodeClient,
+  sessionId: string
+): Promise<PendingRuntimeInputs> {
+  const [permissions, forms] = await Promise.all([
+    client.permission.list({ sessionID: sessionId }),
+    client.form.list({ sessionID: sessionId }),
+  ]);
+  return { permissions, forms };
+}
+
+async function loadRuntimeLiveState(
+  client: OpenCodeClient,
+  sessionId: string,
+  activeSessions?: Awaited<ReturnType<OpenCodeClient["session"]["active"]>>
+): Promise<RuntimeLiveState> {
+  const [active, inbox, pendingInputs] = await Promise.all([
+    activeSessions ?? client.session.active(),
+    client.session.inbox.list({ sessionID: sessionId }),
+    loadPendingRuntimeInputs(client, sessionId),
+  ]);
+  return {
+    active: Boolean(active[sessionId]),
+    inbox,
+    ...pendingInputs,
+  };
+}
+
+function hasRecoverableLiveState(state: RuntimeLiveState): boolean {
+  return (
+    state.active ||
+    state.inbox.length > 0 ||
+    state.permissions.length > 0 ||
+    state.forms.length > 0
+  );
+}
+
+function hasQueuedExecution(state: RuntimeLiveState): boolean {
+  return state.inbox.some((item) => item.type !== "synthetic");
+}
+
+async function applyRuntimeLiveState(
+  runtime: RuntimeHandle,
+  state: RuntimeLiveState
+): Promise<void> {
+  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
+  for (const event of createPendingInputEvents(state)) {
+    publish(runtime.session.id, event);
+  }
+
+  if (state.permissions.length > 0 || state.forms.length > 0) {
+    await applyRuntimeStatus(runtime, "awaiting_input", undefined, {
+      persist: !runtime.preserveResumeOnInterrupt,
+    });
+    return;
+  }
+  await applyRuntimeStatus(runtime, "working");
+}
+
+function createPendingInputEvents(
+  state: PendingRuntimeInputs
+): InputRequiredEvent[] {
+  return [
+    ...state.permissions.map(
+      (permission): InputRequiredEvent => ({
+        type: "input_required",
+        sessionId: permission.sessionID,
+        permissionId: permission.id,
+        title: permission.action,
+        kind: "permission",
+      })
+    ),
+    ...state.forms.map(
+      (form): InputRequiredEvent => ({
+        type: "input_required",
+        sessionId: form.sessionID,
+        permissionId: form.id,
+        title: form.title,
+        kind: "question",
+      })
+    ),
+  ];
+}
+
+function resolveInputRequiredEvent(
+  event: V2Event
+): InputRequiredEvent | undefined {
+  if (event.type === "permission.asked") {
+    return {
+      type: "input_required",
+      sessionId: event.data.sessionID,
+      permissionId: event.data.id,
+      title: event.data.action,
+      kind: "permission",
+    };
+  }
+
+  if (event.type === "form.created") {
+    return {
+      type: "input_required",
+      sessionId: event.data.form.sessionID,
+      permissionId: event.data.form.id,
+      title: event.data.form.title,
+      kind: "question",
+    };
+  }
+}
+
+export async function fetchPendingAgentInputEvents(
+  sessionId: string
+): Promise<InputRequiredEvent[]> {
+  const runtime = runtimeRegistry.get(sessionId);
+  if (!runtime) {
+    throw new Error("Agent session not found");
+  }
+  return createPendingInputEvents(
+    await loadPendingRuntimeInputs(runtime.client, sessionId)
+  );
 }
 
 async function seedSessionModelPreference(
@@ -2214,30 +2488,14 @@ async function seedSessionModelPreference(
   }
 
   try {
-    const response = await runtime.client.session.prompt({
-      path: { id: runtime.session.id },
-      query: runtime.directoryQuery,
-      body: {
-        noReply: true,
-        model: {
-          providerID: runtime.providerId,
-          modelID: runtime.modelId,
-        },
+    await runtime.client.session.switchModel({
+      sessionID: runtime.session.id,
+      model: {
+        providerID: runtime.providerId,
+        id: runtime.modelId,
         ...(runtime.variant ? { variant: runtime.variant } : {}),
-        parts: [],
       },
     });
-
-    if (!response.error) {
-      return;
-    }
-
-    const message = getRpcErrorMessage(
-      response.error,
-      "Failed to persist session model"
-    );
-
-    logModelSeedWarning(runtime, message);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logModelSeedWarning(runtime, message);
@@ -2256,104 +2514,63 @@ function logModelSeedWarning(runtime: RuntimeHandle, message: string) {
   });
 }
 
-type MessageModelSelection = {
-  providerId: string;
-  modelId: string;
-  variant?: string;
-};
-
-function extractMessageModelSelection(
-  info: Message
-): MessageModelSelection | null {
-  const candidate = (info as { model?: unknown }).model;
-  if (
-    candidate &&
-    typeof candidate === "object" &&
-    candidate !== null &&
-    typeof (candidate as { providerID?: unknown }).providerID === "string" &&
-    typeof (candidate as { modelID?: unknown }).modelID === "string"
-  ) {
-    const { providerID, modelID, variant } = candidate as {
-      providerID: string;
-      modelID: string;
-      variant?: string;
-    };
-    return {
-      providerId: providerID,
-      modelId: modelID,
-      ...(typeof variant === "string" ? { variant } : {}),
-    };
-  }
-  return null;
-}
-
-function getMessageParentId(info: Message): string | null {
-  if (info.role !== "assistant") {
-    return null;
-  }
-  return info.parentID ?? null;
-}
-
-function getAssistantErrorDetails(
-  info: Message
-): AssistantMessage["error"] | null {
-  if (info.role !== "assistant") {
-    return null;
-  }
-  return info.error ?? null;
-}
-
-function getEventSessionId(event: Event): string | null {
+function getEventSessionId(event: V2Event): string | undefined {
   switch (event.type) {
-    case "message.updated":
-      return event.properties.info.sessionID;
-    case "message.part.updated":
-      return event.properties.part.sessionID;
-    case "message.part.removed":
-      return event.properties.sessionID ?? null;
-    case "permission.updated":
-      return event.properties.sessionID ?? null;
-    case "permission.replied":
-      return event.properties.sessionID ?? null;
-    case "todo.updated":
-      return event.properties.sessionID ?? null;
-    case "session.compacted":
-    case "session.diff":
     case "session.status":
-    case "session.error":
     case "session.idle":
-      return event.properties.sessionID ?? null;
+    case "session.execution.started":
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.interrupted":
+    case "session.agent.selected":
+    case "session.model.selected":
+    case "session.step.started":
+    case "permission.asked":
+    case "permission.replied":
+    case "form.replied":
+    case "form.cancelled":
+      return event.data.sessionID;
+    case "form.created":
+      return event.data.form.sessionID;
     default:
-      return getFallbackEventSessionId(event);
+      return;
   }
-}
-
-function getFallbackEventSessionId(event: Event): string | null {
-  const properties = (event as { properties?: unknown }).properties;
-  if (!properties || typeof properties !== "object") {
-    return null;
-  }
-
-  const sessionId = (properties as { sessionID?: unknown }).sessionID;
-  return typeof sessionId === "string" ? sessionId : null;
 }
 
 async function updateRuntimeStatusFromEvent(
   runtime: RuntimeHandle,
-  event: Event
+  event: V2Event
 ): Promise<void> {
+  if (event.type === "session.execution.started") {
+    runtime.session.outcome = undefined;
+    runtime.latestMessageReconciled = false;
+  } else if (event.type === "session.execution.succeeded") {
+    runtime.session.outcome = "succeeded";
+    runtime.latestMessageReconciled = true;
+  } else if (event.type === "session.execution.failed") {
+    runtime.session.outcome = "failed";
+    runtime.latestMessageReconciled = true;
+  } else if (event.type === "session.execution.interrupted") {
+    runtime.session.outcome = "interrupted";
+    runtime.latestMessageReconciled = true;
+  }
+
   if (
-    event.type === "session.error" &&
+    event.type === "session.execution.failed" &&
     runtime.pendingInterrupt &&
-    isSessionErrorAborted(event)
+    isMessageAbortedError(event.data.error)
   ) {
     runtime.pendingInterrupt = false;
     await applyRuntimeStatus(runtime, "awaiting_input");
     return;
   }
 
-  if (runtime.pendingInterrupt && event.type === "message.updated") {
-    return;
+  if (
+    runtime.pendingInterrupt &&
+    (event.type === "session.idle" ||
+      event.type === "session.execution.interrupted")
+  ) {
+    runtime.pendingInterrupt = false;
   }
 
   const update = resolveRuntimeStatusFromEvent(event);
@@ -2361,130 +2578,127 @@ async function updateRuntimeStatusFromEvent(
     return;
   }
 
-  await applyRuntimeStatus(runtime, update.status, update.error);
+  await applyRuntimeStatus(runtime, update.status, update.error, {
+    persist: !runtime.preserveResumeOnInterrupt,
+  });
 }
 
 export function resolveRuntimeStatusFromEvent(
-  event: Event
+  event: V2Event
 ): { status: AgentSessionStatus; error?: string } | null {
-  if (event.type === "session.error") {
-    const message = extractErrorMessage(event);
-    return { status: "error", error: message };
-  }
-
-  if (event.type === "session.idle") {
-    return { status: "awaiting_input" };
-  }
-
-  if (event.type === "session.status") {
-    if (event.properties.status.type === "idle") {
+  switch (event.type) {
+    case "session.execution.failed":
+      return {
+        status: "error",
+        error: formatSessionError(event.data.error),
+      };
+    case "session.idle":
+    case "session.execution.succeeded":
+    case "session.execution.interrupted":
+    case "form.cancelled":
       return { status: "awaiting_input" };
-    }
-    return { status: "working" };
+    case "session.status":
+      return {
+        status:
+          event.data.status.type === "idle" ? "awaiting_input" : "working",
+      };
+    case "permission.asked":
+    case "form.created":
+      return { status: "awaiting_input" };
+    case "permission.replied":
+    case "form.replied":
+    case "session.execution.started":
+    case "session.step.started":
+      return { status: "working" };
+    default:
+      return null;
   }
-
-  const rawType = (event as { type: string }).type;
-  if (rawType === "permission.asked" || rawType === "permission.updated") {
-    return { status: "awaiting_input" };
-  }
-
-  if (rawType === "permission.replied") {
-    return { status: "working" };
-  }
-
-  if (rawType === "question.asked") {
-    return { status: "awaiting_input" };
-  }
-
-  if (rawType === "question.replied") {
-    return { status: "working" };
-  }
-
-  if (rawType === "question.rejected") {
-    return { status: "awaiting_input" };
-  }
-
-  if (event.type !== "message.updated") {
-    return null;
-  }
-
-  const info = event.properties.info;
-  if (info.role === "assistant") {
-    return { status: "working" };
-  }
-
-  return null;
 }
 
 async function loadRemoteMessages(
   runtime: RuntimeHandle
 ): Promise<AgentMessageRecord[]> {
-  const response = await runtime.client.session.messages({
-    path: { id: runtime.session.id },
-    query: runtime.directoryQuery,
-  });
-
-  if (response.error || !response.data) {
-    throw new Error(
-      getRpcErrorMessage(response.error, "Failed to load agent messages")
-    );
+  const messages: SessionMessageInfo[] = [];
+  for await (const message of iterateRemoteMessages(runtime, {
+    limit: 200,
+    order: "asc",
+  })) {
+    messages.push(message);
   }
 
-  return response.data.map(({ info, parts }) => serializeMessage(info, parts));
+  return messages.map((message) =>
+    serializeMessage(runtime.session.id, message)
+  );
 }
 
-function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
+function serializeMessage(
+  sessionId: string,
+  message: SessionMessageInfo
+): AgentMessageRecord {
+  const parts = getMessageParts(message);
   const contentText = extractTextFromParts(parts);
-  const parentId = getMessageParentId(info);
-  const errorDetails = getAssistantErrorDetails(info);
-  const isAborted = isMessageAbortedError(errorDetails);
-  const abortedErrorPayload = isAborted
-    ? extractRpcErrorPayload(errorDetails)
-    : null;
-
+  const role: AgentMessageRole =
+    message.type === "user" || message.type === "assistant"
+      ? message.type
+      : "system";
+  const error = getMessageError(message);
   return {
-    id: info.id,
-    sessionId: info.sessionID,
-    role: info.role,
+    id: message.id,
+    sessionId,
+    role,
     content: contentText.length ? contentText : null,
     parts,
-    state: determineMessageState(info),
-    createdAt: new Date(info.time.created).toISOString(),
-    parentId,
-    errorName: isAborted ? (errorDetails?.name ?? null) : null,
-    errorMessage: isAborted
-      ? (abortedErrorPayload?.data?.message ??
-        abortedErrorPayload?.message ??
-        null)
-      : null,
+    state: determineMessageState(message, error),
+    createdAt: new Date(message.time.created).toISOString(),
+    parentId: null,
+    errorName: error?.type ?? null,
+    errorMessage: error?.message ?? null,
+    errorStatus: error?.status ?? null,
   };
 }
 
-function extractTextFromParts(parts: Part[] | undefined): string {
-  if (!parts?.length) {
-    return "";
+function formatSessionError(error: {
+  type: string;
+  message: string;
+  status?: number;
+}): string {
+  const message = error.message.trim();
+  if (message) {
+    return message;
   }
+  const status = error.status ? ` (${error.status})` : "";
+  return `${error.type}${status}`;
+}
 
-  return parts
-    .filter((part) => part.type === "text" || part.type === "reasoning")
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text;
-      }
-      if (part.type === "reasoning") {
-        return part.text;
-      }
-      return "";
-    })
+function getMessageError(message: SessionMessageInfo) {
+  if (message.type === "assistant") {
+    return message.error;
+  }
+  return message.type === "compaction" && message.status === "failed"
+    ? message.error
+    : undefined;
+}
+
+function extractTextFromParts(parts: AgentMessagePart[] | undefined): string {
+  return (parts ?? [])
+    .map((part) =>
+      (part.type === "text" || part.type === "reasoning") &&
+      typeof part.text === "string"
+        ? part.text
+        : ""
+    )
     .filter(Boolean)
     .join("\n");
 }
 
-function determineMessageState(message: Message): AgentMessageState {
-  if (message.role === "assistant" && message.error) {
+function determineMessageState(
+  message: SessionMessageInfo,
+  error: ReturnType<typeof getMessageError>
+): AgentMessageState {
+  if (error || (message.type === "compaction" && message.status === "failed")) {
     return "error";
   }
-  if (message.role === "assistant" && !message.time.completed) {
+  if (message.type === "assistant" && !message.time.completed) {
     return "streaming";
   }
   return "completed";
@@ -2506,6 +2720,7 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     templateId: runtime.cell.templateId,
     provider: runtime.providerId,
     status: runtime.status,
+    errorMessage: runtime.errorMessage,
     workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
@@ -2522,6 +2737,7 @@ function setRuntimeStatus(
   error?: string
 ) {
   runtime.status = status;
+  runtime.errorMessage = error ?? null;
   const statusEvent =
     error === undefined
       ? { type: "status" as const, status }
@@ -2575,18 +2791,16 @@ async function persistRuntimeResumeState(
 }
 
 export function resolveRuntimeModeFromEvent(
-  event: Event
+  event: V2Event
 ): AgentMode | undefined {
-  if (event.type !== "message.updated") {
-    return;
+  switch (event.type) {
+    case "session.agent.selected":
+      return normalizeAgentMode(event.data.agent);
+    case "session.step.started":
+      return normalizeAgentMode(event.data.agent);
+    default:
+      return;
   }
-
-  return resolveMessageMode(event.properties.info);
-}
-
-function resolveMessageMode(info: Message): AgentMode | undefined {
-  const mode = (info as { mode?: unknown }).mode;
-  return typeof mode === "string" ? normalizeAgentMode(mode) : undefined;
 }
 
 function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {
@@ -2607,7 +2821,7 @@ function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {
 
 function updateRuntimeModeFromEvent(
   runtime: RuntimeHandle,
-  event: Event
+  event: V2Event
 ): void {
   const nextMode = resolveRuntimeModeFromEvent(event);
   if (!nextMode) {
@@ -2615,174 +2829,71 @@ function updateRuntimeModeFromEvent(
   }
 
   setRuntimeMode(runtime, nextMode);
+  runtime.session.agent = nextMode;
 }
 
-function resolveCompactionCount(event: Event, previousCount: number): number {
-  if (event.type !== "session.compacted") {
-    return previousCount;
-  }
-
-  const properties = (event as { properties?: unknown }).properties;
-  if (properties && typeof properties === "object") {
-    const candidate = properties as {
-      compacted?: unknown;
-      count?: unknown;
-    };
-    if (typeof candidate.compacted === "number") {
-      return candidate.compacted;
-    }
-    if (typeof candidate.count === "number") {
-      return candidate.count;
-    }
-  }
-
-  return previousCount + 1;
-}
-
-function publishCompactionStats(runtime: RuntimeHandle): void {
-  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
-  publish(runtime.session.id, {
-    type: "session.compaction",
-    properties: {
-      count: runtime.compaction.count,
-      lastCompactionAt: runtime.compaction.lastCompactionAt,
-    },
-  });
-}
-
-function recordCompactionEvent(runtime: RuntimeHandle, event: Event): void {
-  if (event.type !== "session.compacted") {
+function updateRuntimeModelFromEvent(
+  runtime: RuntimeHandle,
+  event: V2Event
+): void {
+  const model =
+    event.type === "session.model.selected" ||
+    event.type === "session.step.started"
+      ? event.data.model
+      : undefined;
+  if (!model) {
     return;
   }
-  const nextCount = resolveCompactionCount(event, runtime.compaction.count);
-  const timestamp = new Date().toISOString();
-  runtime.compaction = { count: nextCount, lastCompactionAt: timestamp };
-  publishCompactionStats(runtime);
-}
-
-type RpcErrorPayload = {
-  message?: string;
-  data?: { message?: string };
-};
-
-function extractRpcErrorPayload(error: unknown): RpcErrorPayload | null {
-  if (typeof error !== "object" || error === null) {
-    return null;
-  }
-
-  const candidate = error as { message?: unknown; data?: unknown };
-  const payload: RpcErrorPayload = {};
-
-  if (typeof candidate.message === "string") {
-    payload.message = candidate.message;
-  }
-
-  if (candidate.data && typeof candidate.data === "object") {
-    const dataMessage = (candidate.data as { message?: unknown }).message;
-    if (typeof dataMessage === "string") {
-      payload.data = { message: dataMessage };
-    }
-  }
-
-  return payload.message || payload.data ? payload : null;
-}
-
-function extractErrorMessage(event: Event): string {
-  if (event.type !== "session.error") {
-    return "Agent session error";
-  }
-  const rpcError = extractRpcErrorPayload(event.properties.error);
-  if (rpcError?.data?.message) {
-    return rpcError.data.message;
-  }
-  if (rpcError?.message) {
-    return rpcError.message;
-  }
-  return "Agent session error";
-}
-
-function isSessionErrorAborted(event: Event): boolean {
-  if (event.type !== "session.error") {
-    return false;
-  }
-  return isMessageAbortedError(event.properties.error);
+  runtime.providerId = model.providerID;
+  runtime.modelId = model.id;
+  runtime.variant = model.variant;
+  runtime.session.model = model;
 }
 
 function isMessageAbortedError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const candidate = error as {
-    name?: string;
-    data?: { name?: string; message?: string };
-    errors?: Array<{ name?: string }>;
-  };
-  if (candidate.name === "MessageAbortedError") {
-    return true;
-  }
-  if (candidate.data?.name === "MessageAbortedError") {
-    return true;
-  }
-  if (
-    Array.isArray(candidate.errors) &&
-    candidate.errors.some((item) => item?.name === "MessageAbortedError")
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    (error instanceof Error && error.name === "MessageAbortedError") ||
+    (typeof error === "object" &&
+      error !== null &&
+      "type" in error &&
+      error.type === "MessageAbortedError")
+  );
 }
 
 function getRpcErrorMessage(error: unknown, fallback: string): string {
-  const rpcError = extractRpcErrorPayload(error);
-  if (!rpcError) {
-    return fallback;
+  if (error instanceof Error) {
+    return error.message;
   }
-  if (rpcError.data?.message) {
-    return rpcError.data.message;
-  }
-  if (rpcError.message) {
-    return rpcError.message;
-  }
-  return fallback;
-}
-
-function isSessionMissingError(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("not found") || normalized.includes("unknown session")
-  );
+  return typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+    ? error.message
+    : fallback;
 }
 
 async function deleteRemoteOpencodeSession(args: {
   sessionId: string;
-  directoryQuery: DirectoryQuery;
-  client?: OpencodeClient;
+  client?: OpenCodeClient;
 }): Promise<void> {
   const client =
     args.client ??
     (await getAgentRuntimeDependencies().acquireOpencodeClient());
-  const response = await client.session
-    .delete({
-      path: { id: args.sessionId },
-      query: args.directoryQuery,
-    })
-    .catch((error: unknown) => ({ error }));
-
-  if (!response.error) {
+  try {
+    await client.session.remove({ sessionID: args.sessionId });
     return;
+  } catch (error) {
+    if (isSessionNotFoundError(error)) {
+      return;
+    }
+    const message = getRpcErrorMessage(
+      error,
+      "Failed to delete OpenCode session during runtime shutdown"
+    );
+    process.stderr.write(
+      `[agent] Failed to delete OpenCode session ${args.sessionId}: ${message}\n`
+    );
   }
-
-  const message = getRpcErrorMessage(
-    response.error,
-    "Failed to delete OpenCode session during runtime shutdown"
-  );
-  if (isSessionMissingError(message)) {
-    return;
-  }
-
-  process.stderr.write(
-    `[agent] Failed to delete OpenCode session ${args.sessionId}: ${message}\n`
-  );
 }
 
 async function getCellById(id: string): Promise<Cell | null> {

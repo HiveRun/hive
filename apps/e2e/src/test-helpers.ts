@@ -23,8 +23,10 @@ const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 type CellRecord = {
   id: string;
   workspaceId: string;
+  workspacePath: string;
   status: string;
   lastSetupError?: string | null;
+  setupLog?: string;
 };
 
 type ServicePortRecord = {
@@ -62,6 +64,7 @@ type ActivityRecord = {
 
 export type AgentSession = {
   id: string;
+  errorMessage?: string | null;
   modelId?: string;
   modelProviderId?: string;
   provider?: string;
@@ -166,6 +169,20 @@ export async function waitForCondition(options: {
   }
 
   throw new Error(options.errorMessage);
+}
+
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    );
+  }
 }
 
 function parseCellIdFromUrl(url: string): string {
@@ -390,6 +407,7 @@ export async function waitForChatRoute(options: {
 
 export async function createCellViaApi(options: {
   apiUrl: string;
+  description?: string;
   name: string;
   workspaceId?: string;
   templateLabel?: string;
@@ -404,6 +422,7 @@ export async function createCellViaApi(options: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
+      ...(options.description ? { description: options.description } : {}),
       name: options.name,
       templateId,
       workspaceId,
@@ -702,6 +721,42 @@ export async function fetchAgentMessageIds(
   return new Set(messages.map((message) => message.id));
 }
 
+export async function waitForAgentMessage(options: {
+  apiUrl: string;
+  baselineMessageIds: ReadonlySet<string>;
+  cellId: string;
+  content: string;
+  errorMessage: string;
+  intervalMs?: number;
+  role: "assistant" | "user";
+  sessionId: string;
+  timeoutMs: number;
+}): Promise<void> {
+  await waitForCondition({
+    check: async () => {
+      const session = await fetchAgentSession(options.apiUrl, options.cellId);
+      if (session?.status === "error") {
+        throw new Error(
+          `Agent session ${session.id} failed: ${session.errorMessage ?? session.status}`
+        );
+      }
+      const messages = await fetchAgentMessages(
+        options.apiUrl,
+        options.sessionId
+      );
+      return messages.some(
+        (message) =>
+          !options.baselineMessageIds.has(message.id) &&
+          message.role === options.role &&
+          Boolean(message.content?.includes(options.content))
+      );
+    },
+    errorMessage: options.errorMessage,
+    intervalMs: options.intervalMs,
+    timeoutMs: options.timeoutMs,
+  });
+}
+
 export async function waitForAgentSession(options: {
   apiUrl: string;
   cellId: string;
@@ -860,9 +915,12 @@ function formatCellDiagnostic(diagnostic: {
       diagnostic.error ? ` (${diagnostic.error})` : ""
     }.`;
   }
+  const setupOutput = diagnostic.cell.setupLog
+    ?.trim()
+    .slice(-SERVICE_DIAGNOSTIC_LOG_LENGTH);
   return ` Cell status: ${diagnostic.cell.status}${
     diagnostic.cell.lastSetupError ? ` (${diagnostic.cell.lastSetupError})` : ""
-  }.`;
+  }${setupOutput ? ` Setup output: ${setupOutput}` : ""}.`;
 }
 
 export async function ensureTerminalReady(

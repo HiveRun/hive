@@ -20,6 +20,7 @@ export type RuntimeContext = {
   logsDir: string;
   artifactsDir: string;
   apiPort: number;
+  opencodePort: number;
   webPort?: number;
   apiUrl: string;
   webUrl?: string;
@@ -42,7 +43,8 @@ export async function createRuntimeContext(
   const logsDir = join(runRoot, "logs");
   const artifactsDir = join(runRoot, "artifacts");
 
-  const [apiPort, webPort] = await Promise.all([
+  const [apiPort, opencodePort, webPort] = await Promise.all([
+    findAvailablePort(),
     findAvailablePort(),
     options.includeWebPort === false
       ? Promise.resolve(undefined)
@@ -68,6 +70,7 @@ export async function createRuntimeContext(
     logsDir,
     artifactsDir,
     apiPort,
+    opencodePort,
     webPort,
     apiUrl,
     webUrl,
